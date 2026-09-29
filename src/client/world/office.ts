@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { ASHTRAY, BALCONY, BALCONY_DOOR, BEANBAGS, BOARDS, BOOKSHELF, CABINET, DESKS, DESK_SIZE, ELEVATOR, EXIT_DOOR, EXIT_STAIRS, FLOOR, GONG, JUKEBOX, KIOSK, LADDER, LOFT, MACHINE_MONITOR, MEETING_BOARD, MEETING_ROOM, MEETING_SEATS, MEETING_TABLE, PLANTS, SEATING_BY_ID, SLAB, STAIRS, STATIONS, STATION_AGENT, STOREY, STREET_Y, TV, WALL_HEIGHT, WALL_T, WINDOWS, deskSeat, streetBelow, type DeskDef, type Opening, type Side, type StationKind } from '../../shared/layout';
+import { ASHTRAY, BALCONY, BALCONY_DOOR, BEANBAGS, BOARDS, BOOKSHELF, CABINET, DESKS, DESK_SIZE, ELEVATOR, EXIT_DOOR, EXIT_STAIRS, FLOOR, GONG, JUKEBOX, KIOSK, LADDER, LOFT, MACHINE_MONITOR, MEETING_BOARD, MEETING_ROOM, MEETING_SEATS, MEETING_TABLE, PLANTS, RECEPTION, SEATING_BY_ID, SLAB, STAIRS, STATIONS, STATION_AGENT, STOREY, STREET_Y, TV, WALL_HEIGHT, WALL_T, WINDOWS, deskSeat, streetBelow, type DeskDef, type Opening, type Side, type StationKind } from '../../shared/layout';
 import { wallFacing, type WallId, type WallRect } from '../../shared/decor';
 import { deskPoint } from '../../shared/nav';
 import { FLOOR_PALETTES, type FloorPalette } from '../../shared/floors';
@@ -1016,6 +1016,34 @@ export function buildOffice(): Office {
     interactables.push(it);
     view.group.userData.interact = it;
   });
+
+  // The reception desk by the elevator: a desk with a counter along its front and a sign on it.
+  {
+    const def = RECEPTION;
+    const view = buildDesk(def, 7, trimMat);
+    const { width, depth } = DESK_SIZE;
+    const front = -depth / 2 - 0.06;
+    view.group.add(mesh(roundedBox(width + 0.2, 1.06, 0.08, 0.03), toon('#2b2d42'), 0, 0.53, front));
+    view.group.add(mesh(roundedBox(width + 0.3, 0.06, 0.34, 0.03), toon(PALETTE.wood), 0, 1.09, front - 0.08));
+    const sign = textPlane('🛎️ Reception', { bg: '#2b2d42', color: '#fffaf3', size: 56, border: '#ffd166' });
+    sign.scale.multiplyScalar(0.55);
+    sign.position.set(0, 0.62, front - 0.05);
+    sign.rotation.y = Math.PI;
+    view.group.add(sign);
+    // A bell to ring on the counter.
+    const bell = mesh(new THREE.SphereGeometry(0.07, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2), toon('#ffd166', { emissive: '#6b4f00' }), width / 2 - 0.2, 1.12, front - 0.1);
+    view.group.add(bell);
+    view.group.add(mesh(new THREE.CylinderGeometry(0.085, 0.085, 0.015, 14), toon('#2b2d42'), width / 2 - 0.2, 1.12, front - 0.1));
+    group.add(view.group);
+    desks.set(def.id, view);
+    // Turned a quarter, so the counter runs along z; the counter's front sticks out west of the desk.
+    const hw = width / 2 + 0.15;
+    colliders.push({ minX: def.x + front - 0.25, maxX: def.x + depth / 2 - 0.02, minZ: def.z - hw, maxZ: def.z + hw, top: 1.12 });
+    // Walk up to the counter's front, the way you'd come from the elevator.
+    const it: Interactable = { kind: 'desk', deskId: def.id, x: def.x + front - 0.95, z: def.z, radius: 1.5 };
+    interactables.push(it);
+    view.group.userData.interact = it;
+  }
 
   // Bean bags, put away until every desk is taken.
   const beanbags = new Map<string, { view: DeskView; it: Interactable; collider: Collider }>();

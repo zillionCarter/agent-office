@@ -12,7 +12,8 @@ const USAGE = `Usage:
   office-queue add --title "…" [--issue 12] <<'EOF'  add a task, its prompt on stdin (or --prompt "…");
   …the prompt…                                       prints the new task's id
   EOF
-  office-queue remove <id>                           take a waiting task off`;
+  office-queue remove <id>                           take a waiting task off
+  office-queue workers                               who's on this floor, and what each one is doing`;
 
 /** A mistake in how the command was called: the usage is shown with it. */
 export class UsageError extends Error {}
@@ -34,6 +35,10 @@ export function parseArgs(argv) {
   if (cmd === 'list' || cmd === 'ls') {
     if (rest.length) throw new UsageError(`list takes no arguments (got ${rest.join(' ')})`);
     return { cmd: 'list' };
+  }
+  if (cmd === 'workers' || cmd === 'who') {
+    if (rest.length) throw new UsageError(`workers takes no arguments (got ${rest.join(' ')})`);
+    return { cmd: 'workers' };
   }
   if (cmd === 'remove' || cmd === 'rm') {
     if (rest.length !== 1 || rest[0].startsWith('-')) throw new UsageError('remove takes one task id, e.g. office-queue remove 3f9c2a1b7d4e');
@@ -93,6 +98,10 @@ export function buildRequest(cmd, office, prompt) {
   url.searchParams.set('worker', office.worker);
   const headers = { authorization: `Bearer ${office.token}` };
   if (cmd.cmd === 'list') return { method: 'GET', url: url.href, headers };
+  if (cmd.cmd === 'workers') {
+    url.searchParams.set('view', 'workers');
+    return { method: 'GET', url: url.href, headers };
+  }
   if (cmd.cmd === 'remove') {
     url.searchParams.set('task', cmd.id);
     return { method: 'DELETE', url: url.href, headers };
@@ -123,6 +132,25 @@ export function formatQueue(view) {
     if (t.pr) parts.push(`PR #${t.pr.number}${t.pr.state ? ` ${String(t.pr.state).toLowerCase()}` : ''} ${t.pr.url}`);
     if (t.error) parts.push(`error: ${t.error}`);
     lines.push(`${t.id}  ${status(t).padEnd(width)}  ${parts.join(' · ')}`);
+  }
+  return lines.join('\n');
+}
+
+/**
+ * The floor's workers as the office returns them, one line each.
+ * @param {{ workers?: Array<Record<string, any>> }} view
+ */
+export function formatWorkers(view) {
+  const workers = view?.workers ?? [];
+  if (!workers.length) return 'Nobody else is on this floor.';
+  const lines = [`${workers.length} worker${workers.length === 1 ? '' : 's'} on this floor`];
+  for (const w of workers) {
+    const what = [w.kind === 'shell' ? 'shell' : w.role ?? 'coder', String(w.status ?? '?')];
+    const parts = [`${w.name} at ${w.desk} (${what.join(', ')})`];
+    if (w.task) parts.push(w.task);
+    if (w.doing && w.doing !== w.task) parts.push(`now: ${w.doing}`);
+    if (w.pr) parts.push(`PR #${w.pr.number} ${w.pr.url}`);
+    lines.push(parts.join(' · '));
   }
   return lines.join('\n');
 }
@@ -200,6 +228,7 @@ export async function main(argv, io = {}) {
       return 1;
     }
     if (cmd.cmd === 'list') out(formatQueue(res.body));
+    else if (cmd.cmd === 'workers') out(formatWorkers(res.body));
     else if (cmd.cmd === 'remove') out(`Took ${cmd.id} off the queue.`);
     else {
       const task = res.body?.task ?? {};

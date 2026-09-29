@@ -1,7 +1,7 @@
 // Getting around the office floor downstairs (no stairs, no loft, no elevator), round the furniture
 // on a coarse grid: the dog's walks (server/dog.ts), and a worker's way out when it's sent home.
 
-import { BALCONY, BALCONY_DOOR, BEANBAGS, BOOKSHELF, CABINET, DESK_SIZE, DESKS, ELEVATOR, ELEVATOR_FRONT, EXIT_DOOR, EXIT_STAIRS, FLOOR, GONG, JUKEBOX, KIOSK, LADDER, LOFT, MEETING_ROOM, MEETING_SEATS, MEETING_TABLE, PARACHUTE, PLANTS, POLE, POLES, ROAD, STAIRS, STATIONS, WHITEBOARD, type DeskDef } from './layout.js';
+import { BALCONY, BALCONY_DOOR, BEANBAGS, BOOKSHELF, CABINET, DESK_SIZE, DESKS, ELEVATOR, ELEVATOR_FRONT, EXIT_DOOR, EXIT_STAIRS, FLOOR, GONG, JUKEBOX, KIOSK, LADDER, LOFT, MEETING_ROOM, MEETING_SEATS, MEETING_TABLE, PARACHUTE, PLANTS, POLE, POLES, RECEPTION, ROAD, STAIRS, STATIONS, WHITEBOARD, type DeskDef } from './layout.js';
 
 
 export type Pt = [number, number];
@@ -31,6 +31,12 @@ function obstacles(): { rects: Rect[]; circles: Circle[] } {
     rects.push([d.x - hw, d.x + hw, d.z - hd, d.z + hd]);
     const [cx, cz] = deskPoint(d, 0, 0.9);
     circles.push([cx, cz, 0.35]); // the chair
+  }
+  {
+    // The reception counter, turned a quarter so it runs along z, and its chair on the east side.
+    rects.push([RECEPTION.x - hd, RECEPTION.x + hd, RECEPTION.z - hw, RECEPTION.z + hw]);
+    const [cx, cz] = deskPoint(RECEPTION, 0, 0.9);
+    circles.push([cx, cz, 0.35]);
   }
   rects.push([10, 11, -2.2, 2.2]); // couch
   rects.push([12.2, 13.8, -0.8, 0.8]); // coffee table

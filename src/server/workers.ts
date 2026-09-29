@@ -312,7 +312,7 @@ export class WorkerManager {
       model: selectedProvider === 'opencode' || selectedProvider === 'claude' ? model : undefined,
       effort: selectedProvider === 'claude' ? effort : undefined,
       // Board agents and meetings have briefs of their own; everyone else is what they were hired as, or what the floor hires.
-      role: kind === 'agent' && !seat.station && !meeting ? roleOrNone(role ?? this.defaultRole) : undefined,
+      role: kind === 'agent' && !seat.station && !meeting ? roleOrNone(role ?? (seat.reception ? 'receptionist' : this.defaultRole)) : undefined,
       deskId,
       name: kind === 'shell' ? `${name} 🐚` : name,
       color: kind === 'shell' ? '#8d99ae' : agent ? agent.color : COLORS[Math.floor(Math.random() * COLORS.length)],
@@ -341,6 +341,23 @@ export class WorkerManager {
   /** The first free desk (then bean bag) for a worker who arrives without anyone picking one. */
   freeSeat(): string | undefined {
     return nextFreeSeat((id) => this.deskOccupied(id))?.id;
+  }
+
+  /** Moves a worker to another seat on this floor (the reception desk, say), still running. Returns why it can't, if it can't. */
+  reseat(id: string, deskId: string): string | undefined {
+    const w = this.workers.get(id);
+    if (!w) return 'No such worker';
+    const from = DESK_BY_ID.get(w.info.deskId);
+    const to = DESK_BY_ID.get(deskId);
+    if (!to) return 'Unknown desk';
+    if (from?.station || w.info.meeting) return `${w.info.name} stays where it is`;
+    if (to.station || to.room) return 'Only a desk, a bean bag or reception will do';
+    if (w.info.deskId === deskId) return undefined;
+    if (this.deskOccupied(deskId)) return `${to.label} is taken`;
+    w.info.deskId = deskId;
+    this.emitUpdate(w);
+    this.persist();
+    return undefined;
   }
 
   /** Where a Claude worker's conversation is saved, if it has one. */
@@ -1020,8 +1037,8 @@ export class WorkerManager {
       AGENT_OFFICE_HOOK_URL: this.hook.url,
       AGENT_OFFICE_HOOK_TOKEN: w.hookToken,
     });
-    // A board agent reaches the queue with the office-queue command, whichever agent it runs.
-    if (station && this.queueBin) {
+    // A board agent (or whoever's at reception) reaches the queue with the office-queue command, whichever agent it runs.
+    if ((station || DESK_BY_ID.get(info.deskId)?.reception) && this.queueBin) {
       // Windows spells it Path.
       const key = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH';
       env[key] = [this.queueBin, env[key]].filter(Boolean).join(path.delimiter);

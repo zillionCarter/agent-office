@@ -309,7 +309,17 @@ export async function startServer(cfg: Config) {
     const floor = workerFloor(workerId);
     const agent = floor?.workers.authenticate(workerId, token);
     if (!floor || !agent) return send(res, 401, { error: 'Send your own AGENT_OFFICE_WORKER_ID as ?worker= and AGENT_OFFICE_HOOK_TOKEN as the bearer token' });
-    if (!DESK_BY_ID.get(agent.deskId)?.station) return send(res, 403, { error: 'Only the agents standing by the boards can use the queue' });
+    const seat = DESK_BY_ID.get(agent.deskId);
+    if (!seat?.station && !seat?.reception) return send(res, 403, { error: 'Only the agents standing by the boards, and whoever is at reception, can use the queue' });
+    // Who's on the floor and what they're doing, for the front desk.
+    if (req.method === 'GET' && url.searchParams.get('view') === 'workers') {
+      return send(res, 200, {
+        workers: floor.workers
+          .list()
+          .filter((w) => w.id !== agent.id)
+          .map((w) => ({ name: w.name, desk: DESK_BY_ID.get(w.deskId)?.label ?? w.deskId, kind: w.kind, role: w.role, status: w.status, doing: w.activity, task: w.title, pr: w.pr })),
+      });
+    }
     const view = () => {
       const q = floor.queue.state();
       return {
@@ -1322,6 +1332,15 @@ export async function startServer(cfg: Config) {
         if (typeof r === 'string') return warn(c, r);
         console.log(`  ${who} brought the Cowork chat “${chat.title}” onto ${floor.def.name} as ${r.name}`);
         toastFloor(floor, `📥 ${who} brought in “${chat.title}” from Cowork: ${r.name} carries on with it`);
+        break;
+      }
+      case 'worker.seat': {
+        const w = worker(msg.workerId);
+        if (!w) return warn(c, 'No such worker');
+        const deskId = str(msg.deskId, 32);
+        const err = w.floor.workers.reseat(w.wid, deskId);
+        if (err) return warn(c, err);
+        toastFloor(w.floor, `🛎️ ${who} moved ${w.info.name} to ${DESK_BY_ID.get(deskId)?.label ?? 'another desk'}`);
         break;
       }
       case 'worker.move': {

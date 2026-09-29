@@ -68,9 +68,12 @@ export function cantMove(w: WorkerInfo): string | undefined {
   return undefined;
 }
 
-/** Pick the floor to send `w` to. */
-export function openMoveFloor(net: Net, w: WorkerInfo) {
-  const others = store.floors.filter((f) => f.id !== store.floor && !f.cloning);
+/**
+ * Where to send `w`: the reception desk on this floor (when `reception`, it's free), or another floor.
+ * `noFloors` says why it can't change floors, if it can't.
+ */
+export function openMoveFloor(net: Net, w: WorkerInfo, reception = false, noFloors?: string) {
+  const others = noFloors ? [] : store.floors.filter((f) => f.id !== store.floor && !f.cloning);
   const close = h('button.btn.close', { type: 'button', 'aria-label': 'Close' }, '✕');
   const buttons = others.map((f) => {
     const p = floorPalette(f.palette);
@@ -87,15 +90,29 @@ export function openMoveFloor(net: Net, w: WorkerInfo) {
     });
     return b;
   });
+  const desk = reception
+    ? h(
+        'button.floor-btn',
+        { type: 'button', title: `Seat ${w.name} at reception` },
+        h('span.floor-no', { style: 'background:#2b2d42' }, '🛎️'),
+        h('span.floor-text', {}, h('span.floor-name', {}, 'Reception, on this floor'), h('span.floor-sub', {}, `${w.name} moves to the front desk by the elevator and keeps working`)),
+        h('span.floor-stats'),
+      )
+    : null;
+  desk?.addEventListener('click', () => {
+    net.send({ t: 'worker.seat', workerId: w.id, deskId: 'reception' });
+    modal.close();
+  });
   const el = h(
     'div.modal.elevator',
     { role: 'dialog', 'aria-label': `Move ${w.name}` },
-    h('header', {}, h('h2', {}, `🛗 Send ${w.name} to another floor`), close),
+    h('header', {}, h('h2', {}, `🛗 Move ${w.name}`), close),
     h(
       'div.body',
       {},
-      h('p.intro', {}, `${w.name} packs up here and sits down on the other floor with its whole conversation, working in that floor’s folder from then on. If it’s in the middle of something, that stops; ask it to carry on once it’s there.`),
-      h('div.floors', {}, ...(buttons.length ? buttons : [h('p.empty', {}, 'There’s no other floor yet — add one in the elevator.')])),
+      desk ? h('div.floors', { style: 'margin-bottom:14px' }, desk) : null,
+      h('p.intro', {}, noFloors ? `To another floor: ${noFloors}.` : `To another floor: ${w.name} packs up here and sits down there with its whole conversation, working in that floor’s folder from then on. If it’s in the middle of something, that stops; ask it to carry on once it’s there.`),
+      h('div.floors', {}, ...(buttons.length ? buttons : noFloors ? [] : [h('p.empty', {}, 'There’s no other floor yet — add one in the elevator.')])),
     ),
   );
   const modal = openModal(el, { doing: '🛗 moving a worker' });

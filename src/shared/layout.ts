@@ -19,6 +19,8 @@ export interface DeskDef {
   station?: StationKind;
   /** A chair at the meeting room's table (see MEETING_SEATS): only a meeting seats a worker here. */
   room?: boolean;
+  /** The reception desk by the elevator (see RECEPTION): a desk, but only for whoever you put there. */
+  reception?: boolean;
 }
 
 const DESK_WIDTH = 2.2;
@@ -134,8 +136,16 @@ export const MEETING_SEATS: DeskDef[] = (
 /** The board on the meeting room's back (south) wall that shows the meeting's output file as it's written. */
 export const MEETING_BOARD = { x: MEETING_TABLE.x, y: 1.95, z: FLOOR.maxZ - 0.08, width: 3.6, height: 1.2 } as const;
 
-/** Any place a worker can be by id: the seats, the board agents' kiosks and the meeting room's chairs. */
-export const DESK_BY_ID = new Map([...SEATS, ...STATIONS, ...MEETING_SEATS].map((d) => [d.id, d]));
+/**
+ * The reception desk: a counter just east of the elevator, turned to face whoever steps out of it,
+ * with its worker sitting on the east side looking west over it. It's a desk like the others, except
+ * that nobody lands there by default (the queue, a Cowork chat or a worker moving floors take the
+ * desks and bean bags): it's for whoever you hire there, a receptionist unless you pick otherwise.
+ */
+export const RECEPTION: DeskDef = { id: 'reception', x: 13, z: -8, rotY: Math.PI / 2, label: 'Reception', reception: true };
+
+/** Any place a worker can be by id: the seats, the reception desk, the board agents' kiosks and the meeting room's chairs. */
+export const DESK_BY_ID = new Map([...SEATS, RECEPTION, ...STATIONS, ...MEETING_SEATS].map((d) => [d.id, d]));
 
 /** The seat a new worker takes when nobody picks one: the first free desk, else the first free bean bag. */
 export function nextFreeSeat(taken: (id: string) => boolean): DeskDef | undefined {

@@ -21,7 +21,7 @@ Back to the [README](../README.md).
 | G / 1–6 | Emote: hold G for the wheel (point and let go) or press 1–6 to wave, give a thumbs up, clap, dance, point or facepalm; everyone on your floor sees it |
 | / | Search the chat and every terminal on your floor |
 | V | Join voice; in voice, hold to talk (you're muted when you let go) |
-| L | At a Claude Code worker's desk: move it to another floor, conversation and all |
+| L | At a worker's desk: move it to the reception desk, or (Claude Code workers) to another floor, conversation and all |
 | M | Mute / unmute in voice |
 | Tab | The ☰ menu: every window, and what shows on screen |
 | Esc | Close any window (a terminal too) and get back to looking around |

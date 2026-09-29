@@ -20,6 +20,8 @@ export interface PromptOptions {
   providerOption?: boolean;
   /** Offer what the worker is hired as: a coder, a personal assistant… (only when hiring a new worker). */
   roleOption?: boolean;
+  /** What the role picker starts on, instead of what the floor hires. */
+  defaultRole?: WorkerRole;
   /** Offer bringing in a Cowork chat instead (only when hiring a new worker). */
   onCowork?: () => void;
   onSubmit(text: string, opts: { worktree: boolean; provider?: AgentProvider; model?: string; effort?: AgentEffort; role?: WorkerRole }): void;
@@ -50,7 +52,7 @@ export function openPrompt(opts: PromptOptions) {
     : null;
   const provider: ProviderPicker | null = opts.providerOption ? providerPicker(store.project, 'prompt-provider') : null;
   // An assistant's floor hires assistants unless you pick otherwise; a project's floor hires coders.
-  let role: WorkerRole = store.floors.find((f) => f.id === store.floor)?.kind === 'assistant' ? 'assistant' : 'coder';
+  let role: WorkerRole = opts.defaultRole ?? (store.floors.find((f) => f.id === store.floor)?.kind === 'assistant' ? 'assistant' : 'coder');
   const roleChips = h('div.seg.role-seg', { role: 'radiogroup', 'aria-label': 'Hire as' });
   const roleBlurb = h('p.setting-note', { style: 'margin:6px 0 0' });
   const paintRole = () => {

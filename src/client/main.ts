@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { OutlineEffect } from 'three/examples/jsm/effects/OutlineEffect.js';
 import { sameLook } from '../shared/avatar';
 import type { WorkerRole } from '../shared/roles';
-import { BALCONY, DESK_BY_ID, DESKS, ELEVATOR, ELEVATOR_CAR, FLOOR, GOLF_HOLE, LADDER, LOFT, POLE, POLES, SEATING_BY_ID, SLAB, STATIONS, STATION_AGENT, STOREY, WALL_HEIGHT, beanbagsOut, deskSeat, inElevator, nextFreeSeat, roofDrop, seatAt, seatPlace, streetBelow, vacantSeats, type DeskDef, type SeatDef, type SeatPlace, type StationKind } from '../shared/layout';
+import { RECEPTION, BALCONY, DESK_BY_ID, DESKS, ELEVATOR, ELEVATOR_CAR, FLOOR, GOLF_HOLE, LADDER, LOFT, POLE, POLES, SEATING_BY_ID, SLAB, STATIONS, STATION_AGENT, STOREY, WALL_HEIGHT, beanbagsOut, deskSeat, inElevator, nextFreeSeat, roofDrop, seatAt, seatPlace, streetBelow, vacantSeats, type DeskDef, type SeatDef, type SeatPlace, type StationKind } from '../shared/layout';
 import { floorPalette } from '../shared/floors';
 import type { AgentEffort, AgentProvider, CarriedIssue, FloorInfo, GhIssue, GongWhy, PeerInfo, WorkerInfo, WorkerTask } from '../shared/protocol';
 import { MEETING_PATTERNS } from '../shared/meetings';
@@ -1151,6 +1151,18 @@ function syncWorkers() {
       v = { model, laptop, deskId: w.deskId, status: '', acked: true };
       workerViews.set(w.id, v);
     }
+    if (v.deskId !== w.deskId) {
+      // Moved to another seat (the reception desk, say): it and its laptop go with it.
+      departures.vacate(w.deskId);
+      desk.seatAnchor.add(v.model.root);
+      desk.laptopAnchor.add(v.laptop.root);
+      const beside = desk.def.station ? new THREE.Vector3(0.62, 0.9, 0) : new THREE.Vector3(0.64, 0.5, -0.1);
+      v.model.setPropSpot(v.model.root.worldToLocal(desk.laptopAnchor.localToWorld(beside)));
+      noOutline(desk.group);
+      desk.chair.rotation.y = 0;
+      sound.removeTypist(w.id);
+      v.deskId = w.deskId;
+    }
     if (v.status !== w.status || v.acked !== w.acked) {
       // It just finished or started waiting on you (not already so when this page first saw it): ding, and notify if you're away.
       if (waitingOnSomeone(w) && v.status !== '' && w.status !== v.status) {
@@ -1326,6 +1338,7 @@ function promptAtDesk(deskId: string) {
       providerOption: true,
       worktreeOption: !!store.project?.branch,
       roleOption: true,
+      defaultRole: desk.reception ? 'receptionist' : undefined,
       onSubmit: (text, o) => hire(deskId, text, o.worktree, o.provider, o.model, o.effort, undefined, o.role),
     });
   } else if (isAsleep(w.status)) {
@@ -1361,16 +1374,23 @@ function hireAtDesk(deskId: string) {
     onCowork: () => openCoworkPicker(net, deskId),
     worktreeOption: !!store.project?.branch,
     roleOption: true,
+      defaultRole: desk.reception ? 'receptionist' : undefined,
       onSubmit: (text, o) => hire(deskId, text || undefined, o.worktree, o.provider, o.model, o.effort, undefined, o.role),
   });
 }
 
-/** Sends a worker to another floor, conversation and all (L at its desk). */
+/** Whether `w` could go to the reception desk on its floor: it's free, and `w` sits somewhere else that it can leave. */
+function receptionFor(w: WorkerInfo): boolean {
+  const from = DESK_BY_ID.get(w.deskId);
+  return !store.workerAtDesk(RECEPTION.id) && !from?.station && !from?.reception && !w.meeting;
+}
+
+/** Sends a worker to reception, or to another floor with its conversation (L at its desk). */
 function moveWorker(w: WorkerInfo) {
+  const floors = store.floors.some((f) => f.id !== store.floor && !f.cloning);
   const why = cantMove(w);
-  if (why) return toast(why, 'warn');
-  if (!store.floors.some((f) => f.id !== store.floor && !f.cloning)) return toast('There’s no other floor to send it to — add one in the elevator', 'warn');
-  openMoveFloor(net, w);
+  if (!receptionFor(w) && (why || !floors)) return toast(why ?? 'There’s no other floor to send it to — add one in the elevator', 'warn');
+  openMoveFloor(net, w, receptionFor(w), why ?? (floors ? undefined : 'There’s no other floor yet — add one in the elevator'));
 }
 
 function killWorker(id: string) {
@@ -2536,7 +2556,7 @@ function deskHint(deskId: string): Hint {
       key('C', 'Changes'),
       isAsleep(w.status) ? key('R', shell ? 'Restart' : 'Resume') : key('P', shell ? 'Run command' : 'Prompt'),
       w.pr ? key('O', `PR #${w.pr.number}`) : w.prOpening ? aside('⏳ Opening PR…') : prReady(w) ? key('O', 'Open PR') : '',
-      store.floors.length > 1 && !cantMove(w) ? key('L', 'Move floor') : '',
+      (store.floors.length > 1 && !cantMove(w)) || receptionFor(w) ? key('L', 'Move') : '',
       key('X', 'Send home'),
     ],
   };

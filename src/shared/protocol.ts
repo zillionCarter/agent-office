@@ -1140,6 +1140,8 @@ export type ClientMsg =
   | { t: 'cowork.list' }
   /** Bring a Cowork chat onto your floor as a Claude Code worker carrying on the conversation, at `deskId` or the first free seat. */
   | { t: 'cowork.import'; chat: string; deskId?: string }
+  /** Move a worker to another seat on its floor (the reception desk, say), still running. */
+  | { t: 'worker.seat'; workerId: string; deskId: string }
   /** Move a Claude Code worker to another floor, conversation and all: it stops here and carries on there. */
   | { t: 'worker.move'; workerId: string; floor: string }
   /** Take a floor off the building (admins only). Its checkout stays on disk; everyone on it rides to another floor. */

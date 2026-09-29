@@ -1128,3 +1128,35 @@ test('a worker can sit down carrying on a conversation it already had, without i
   assert.equal(workers.sessionFile(r.id), transcript);
   assert.match(workers.carryOn(seat, 'Sam', { sessionId: 'x', transcript }) as string, /taken/);
 });
+
+test('whoever is hired at reception is a receptionist with the queue on its PATH, and a worker can move there', async (t) => {
+  const f = fixture();
+  const updates: WorkerInfo[] = [];
+  isolateProviderEnvironment(f, t);
+  const previousLog = process.env.FAKE_AGENT_LOG;
+  process.env.FAKE_AGENT_LOG = f.log;
+  t.after(() => {
+    if (previousLog === undefined) delete process.env.FAKE_AGENT_LOG;
+    else process.env.FAKE_AGENT_LOG = previousLog;
+    f.close();
+  });
+  const workers = manager(f, f.claude, updates);
+  t.after(() => workers.shutdown());
+  const bin = path.join(f.data, 'bin');
+
+  const front = workers.spawn('reception', 'Sam', 'Hello', false, 'agent', 'claude');
+  if (typeof front === 'string') return assert.fail(front);
+  assert.equal(front.role, 'receptionist');
+  const [launch] = await waitFor(() => f.read().filter((r) => r.kind === 'claude' && r.env.workerId === front.id && r.args.includes('--settings')), (l) => l.length === 1);
+  assert.equal((launch.env.path ?? '').split(path.delimiter)[0], bin, 'office-queue is first on its PATH');
+  assert.equal(workers.freeSeat(), 'desk-1', 'nobody lands at reception by default');
+
+  // Someone at a desk moves over once it's free, still running.
+  const ada = workers.spawn('desk-1', 'Sam', 'Write', false, 'agent', 'claude');
+  if (typeof ada === 'string') return assert.fail(ada);
+  assert.match(workers.reseat(ada.id, 'reception')!, /taken/);
+  await workers.kill(front.id);
+  assert.equal(workers.reseat(ada.id, 'reception'), undefined);
+  assert.equal(workers.get(ada.id)?.deskId, 'reception');
+  assert.match(workers.reseat(ada.id, 'station-queue')!, /Only a desk/);
+});

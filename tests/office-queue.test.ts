@@ -6,7 +6,7 @@ import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
-import { UsageError, buildRequest, formatQueue, main, officeEnv, parseArgs } from '../bin/office-queue.js';
+import { UsageError, buildRequest, formatQueue, main, officeEnv, parseArgs, formatWorkers } from '../bin/office-queue.js';
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'office-queue.js');
 const ENV = { AGENT_OFFICE_HOOK_URL: 'http://127.0.0.1:4455', AGENT_OFFICE_WORKER_ID: 'w1 &x', AGENT_OFFICE_HOOK_TOKEN: 'tok' };
@@ -189,4 +189,18 @@ test('runs as a command: a heredoc prompt goes over HTTP with the agent\'s own t
   assert.equal(desk.code, 1);
   assert.equal(desk.stdout, '');
   assert.match(desk.stderr, /The office said no \(403\): Only the agents standing by the boards/);
+});
+
+test('workers lists who is on the floor, for the front desk', () => {
+  assert.deepEqual(parseArgs(['workers']), { cmd: 'workers' });
+  assert.deepEqual(parseArgs(['who']), { cmd: 'workers' });
+  assert.throws(() => parseArgs(['workers', 'extra']), /no arguments/);
+  const req = buildRequest({ cmd: 'workers' }, { url: 'http://127.0.0.1:9/', worker: 'w1', token: 't' });
+  assert.equal(req.method, 'GET');
+  assert.equal(new URL(req.url).searchParams.get('view'), 'workers');
+  assert.equal(formatWorkers({ workers: [] }), 'Nobody else is on this floor.');
+  assert.equal(
+    formatWorkers({ workers: [{ name: 'Ada', desk: 'Desk 3', kind: 'agent', role: 'writer', status: 'working', task: 'Draft the newsletter', doing: 'Editing draft.md' }] }),
+    '1 worker on this floor\nAda at Desk 3 (writer, working) · Draft the newsletter · now: Editing draft.md',
+  );
 });
