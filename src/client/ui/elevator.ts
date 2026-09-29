@@ -260,7 +260,7 @@ export function openElevator(opts: ElevatorOptions): void {
   const TABS: [AddMode, string][] = [
     ['repo', '🐙 GitHub repo'],
     ['folder', '📁 Folder on this computer'],
-    ['assistant', '🤝 Personal assistant'],
+    ['assistant', '🏠 Home base'],
   ];
   const setMode = (m: AddMode) => {
     if (adding || m === mode) return;
@@ -353,7 +353,7 @@ export function openElevator(opts: ElevatorOptions): void {
 
   // ---- A personal assistant's floor ----
   const assistantDir = h('input', { type: 'text', 'aria-label': 'Assistant folder', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
-  const assistantName = h('input', { type: 'text', 'aria-label': 'Floor name', maxlength: 100, value: 'Personal assistant', autocomplete: 'off' }) as HTMLInputElement;
+  const assistantName = h('input', { type: 'text', 'aria-label': 'Floor name', maxlength: 100, value: 'Home base', autocomplete: 'off' }) as HTMLInputElement;
   const assistantStatus = h('div');
   const assistantPane = h(
     'div.hidden',
@@ -361,7 +361,7 @@ export function openElevator(opts: ElevatorOptions): void {
     h(
       'p.note',
       { style: 'margin-top:0' },
-      'A floor for help with anything, not only code: questions, research, writing, plans, your files. Everyone you hire here is a personal assistant (pick Researcher, Writer or Planner when hiring for a specialist). ',
+      'Your home base: a floor for help with anything, not only code — questions, research, writing, plans, your files. Everyone you hire here is a personal assistant (pick Researcher, Writer or Planner when hiring for a specialist), and 📥 From Cowork in the hire window brings in a chat you started in Cowork. ',
       'They start in its folder, read ABOUT-ME.md there to learn about you, and keep their notes in notes/.',
     ),
     h('label', { style: 'display:block;font-weight:800;margin:10px 0 4px' }, 'Floor name'),
@@ -371,10 +371,10 @@ export function openElevator(opts: ElevatorOptions): void {
     assistantStatus,
   );
   const renderAssistant = () => {
-    if (!assistantDir.value) assistantDir.value = `${store.projectsDir.dir}/assistant`;
+    if (!assistantDir.value) assistantDir.value = `${store.projectsDir.dir}/home-base`;
     assistantStatus.replaceChildren(adding ? h('p.note.busy', {}, `⏳ Setting up ${adding}…`) : '', ...(error ? [h('p.err', {}, error)] : []));
     addBtn.disabled = !!adding || !assistantDir.value.trim();
-    addBtn.textContent = adding ? '⏳ Adding…' : '🤝 Add assistant floor';
+    addBtn.textContent = adding ? '⏳ Adding…' : '🏠 Add home base';
     assistantDir.disabled = assistantName.disabled = !!adding;
   };
   assistantDir.addEventListener('input', renderAssistant);
@@ -445,7 +445,7 @@ export function openElevator(opts: ElevatorOptions): void {
         {},
         store.floors.length
           ? 'Every project is a floor of this building. Pick a floor to ride to, or add another project.'
-          : "Every project is a floor of this building, and it doesn't have any yet. Pick one of your repositories (the office clones it), any folder on this computer, or set up a personal assistant: it becomes the first floor.",
+          : "Every project is a floor of this building, and it doesn't have any yet. Pick one of your repositories (the office clones it), any folder on this computer, or set up your home base for personal assistants: it becomes the first floor.",
       )
     : null;
   const el = h(

@@ -675,6 +675,16 @@ export interface FolderListing {
   error?: string;
 }
 
+/** A chat from Claude's Cowork mode, for bringing it into the office as a worker. */
+export interface CoworkChatInfo {
+  id: string;
+  title: string;
+  lastActivityAt: number;
+  archived: boolean;
+  /** It's a worker already: the floor it's on. */
+  floor?: string;
+}
+
 /** Where the elevator's "add a project" clones to: <dir>/<owner>/<repo> on the office's machine. */
 export interface ProjectsDirState {
   /** For showing people: under the home folder it's ~/…. */
@@ -1126,6 +1136,12 @@ export type ClientMsg =
   | { t: 'floor.addFolder'; dir: string; name?: string; create?: boolean; kind?: FloorKind }
   /** The folders in a folder, for picking one; answered with `floor.browse`. */
   | { t: 'floor.browse'; dir: string }
+  /** Cowork's chats on the office's machine; answered with `cowork.list`. */
+  | { t: 'cowork.list' }
+  /** Bring a Cowork chat onto your floor as a Claude Code worker carrying on the conversation, at `deskId` or the first free seat. */
+  | { t: 'cowork.import'; chat: string; deskId?: string }
+  /** Move a Claude Code worker to another floor, conversation and all: it stops here and carries on there. */
+  | { t: 'worker.move'; workerId: string; floor: string }
   /** Take a floor off the building (admins only). Its checkout stays on disk; everyone on it rides to another floor. */
   | { t: 'floor.remove'; floor: string }
   /** Dress the building up for a holiday, take the decorations down ('off'), or follow the calendar ('auto'). */
@@ -1183,6 +1199,7 @@ export type ServerMsg =
   /** Sent to whoever asked. */
   | { t: 'floor.repos'; repos: RepoChoice[]; error?: string }
   | ({ t: 'floor.browse' } & FolderListing)
+  | { t: 'cowork.list'; chats: CoworkChatInfo[]; error?: string }
   /** Sent to whoever asked for the floor, once it's cloned (or couldn't be). */
   | { t: 'floor.added'; repo: string; floor?: string; error?: string }
   /** The projects folder moved (see floor.projectsDir). */

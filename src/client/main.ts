@@ -60,6 +60,7 @@ import { openCharacter } from './ui/character';
 import { openSettings } from './ui/settings';
 import { hiringPaused, renderUsage, usageLabel, usageTitle } from './ui/usage';
 import { elevatorPanelOpen, openElevator, routeElevatorMessage } from './ui/elevator';
+import { cantMove, openCoworkPicker, openMoveFloor, routeCoworkMessage } from './ui/cowork';
 import { toggleFloorMenu } from './ui/floormenu';
 import { providerLabel, officeChoice, resolvedProvider, modelBadge } from './ui/provider';
 import { mirrorWhiteboard, openWhiteboard, routeWhiteboardMessage } from './ui/whiteboard';
@@ -605,6 +606,7 @@ net.onMessage((msg) => {
   routeAccountsMessage(msg);
   routePullMessage(msg);
   routeElevatorMessage(msg);
+  routeCoworkMessage(msg);
   routeWhiteboardMessage(msg, net);
   switch (msg.t) {
     case 'welcome': {
@@ -1356,10 +1358,19 @@ function hireAtDesk(deskId: string) {
     submitLabel: 'Hire & start',
     allowEmpty: true,
     providerOption: true,
+    onCowork: () => openCoworkPicker(net, deskId),
     worktreeOption: !!store.project?.branch,
     roleOption: true,
       onSubmit: (text, o) => hire(deskId, text || undefined, o.worktree, o.provider, o.model, o.effort, undefined, o.role),
   });
+}
+
+/** Sends a worker to another floor, conversation and all (L at its desk). */
+function moveWorker(w: WorkerInfo) {
+  const why = cantMove(w);
+  if (why) return toast(why, 'warn');
+  if (!store.floors.some((f) => f.id !== store.floor && !f.cloning)) return toast('There’s no other floor to send it to — add one in the elevator', 'warn');
+  openMoveFloor(net, w);
 }
 
 function killWorker(id: string) {
@@ -1668,6 +1679,7 @@ function interact(target: Interactable | null, key: DeskKey, note = aimedNote) {
     if (key === 'R' && w && isAsleep(w.status)) return resumeWorker(w);
     if (key === 'X' && w) return killWorker(w.id);
     if (key === 'O' && w) return pullRequestFor(w);
+    if (key === 'L' && w) return moveWorker(w);
     return;
   }
   if (target.kind === 'station' && target.deskId) {
@@ -2524,6 +2536,7 @@ function deskHint(deskId: string): Hint {
       key('C', 'Changes'),
       isAsleep(w.status) ? key('R', shell ? 'Restart' : 'Resume') : key('P', shell ? 'Run command' : 'Prompt'),
       w.pr ? key('O', `PR #${w.pr.number}`) : w.prOpening ? aside('⏳ Opening PR…') : prReady(w) ? key('O', 'Open PR') : '',
+      store.floors.length > 1 && !cantMove(w) ? key('L', 'Move floor') : '',
       key('X', 'Send home'),
     ],
   };
@@ -2692,7 +2705,7 @@ function emoteKey(e: KeyboardEvent): boolean {
 }
 
 /** Keys that use what you're facing: at a desk, each does something else (see interact). */
-const DESK_KEYS = { KeyE: 'E', KeyP: 'P', KeyR: 'R', KeyX: 'X', KeyB: 'B', KeyC: 'C', KeyO: 'O' } as const;
+const DESK_KEYS = { KeyE: 'E', KeyP: 'P', KeyR: 'R', KeyX: 'X', KeyB: 'B', KeyC: 'C', KeyO: 'O', KeyL: 'L' } as const;
 type DeskKey = (typeof DESK_KEYS)[keyof typeof DESK_KEYS];
 
 function use(it: Interactable | null, key: DeskKey, note = aimedNote) {

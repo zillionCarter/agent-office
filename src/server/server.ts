@@ -39,6 +39,7 @@ import { WB_MAX_FILE_BYTES } from '../shared/whiteboard.js';
 import { MAX_FLOORS } from '../shared/floors.js';
 import { LOOK_KEYS, lookFromSeed, sanitizeLook } from '../shared/avatar.js';
 import { ROLE_BY_ID, isWorkerRole } from '../shared/roles.js';
+import { copyClaudeSession, listCowork } from './sessions.js';
 import { EMOTE_EVERY, EmoteBucket, isEmote } from '../shared/emotes.js';
 import { isThemePick } from '../shared/theme.js';
 import { PROMPTS, PROMPT_MAX, isPromptId } from '../shared/prompts.js';
@@ -239,6 +240,12 @@ export async function startServer(cfg: Config) {
   };
   const toastFloor = (floor: Floor | undefined, text: string, level: ToastLevel = 'info') => {
     if (floor) toFloor(floor, { t: 'toast', text, level });
+  };
+  /** Which floor each Claude session already has a worker on, by session id. */
+  const sessionFloors = () => {
+    const on = new Map<string, string>();
+    for (const f of floors.values()) for (const w of f.workers.list()) if (w.sessionId) on.set(w.sessionId, f.def.name);
+    return on;
   };
   const floorInfos = (): FloorInfo[] => [
     ...[...floors.values()].map((f) => ({ ...f.info(), ...(building.isLocal(f.id) ? { local: true } : {}) })),
@@ -1289,6 +1296,78 @@ export async function startServer(cfg: Config) {
       case 'floor.browse':
         sendTo(c, { t: 'floor.browse', ...building.browse(str(msg.dir, 1024)) });
         break;
+      case 'cowork.list': {
+        const on = sessionFloors();
+        try {
+          const chats = listCowork().map((ch) => ({ id: ch.id, title: ch.title, lastActivityAt: ch.lastActivityAt, archived: ch.archived, floor: on.get(ch.sessionId) }));
+          sendTo(c, { t: 'cowork.list', chats });
+        } catch (err) {
+          sendTo(c, { t: 'cowork.list', chats: [], error: `Couldn't read Cowork's chats: ${(err as Error).message}` });
+        }
+        break;
+      }
+      case 'cowork.import': {
+        const floor = here();
+        if (!floor) break;
+        const chat = listCowork().find((ch) => ch.id === str(msg.chat, 100));
+        if (!chat) return warn(c, "That Cowork chat isn't there any more");
+        const already = sessionFloors().get(chat.sessionId);
+        if (already) return warn(c, `“${chat.title}” is already a worker on ${already}`);
+        const wanted = msg.deskId === undefined ? undefined : str(msg.deskId, 32);
+        const desk = wanted && !floor.workers.deskOccupied(wanted) ? wanted : floor.workers.freeSeat();
+        if (!desk) return warn(c, 'Every desk is taken — send a worker home first');
+        const copy = copyClaudeSession(chat.transcript, chat.sessionId, floor.dir);
+        if (typeof copy !== 'string') return warn(c, `Couldn't bring in “${chat.title}”: ${copy.error}`);
+        const r = floor.workers.carryOn(desk, who, { sessionId: chat.sessionId, transcript: copy, role: floor.def.kind === 'assistant' ? 'assistant' : undefined, title: chat.title, activity: `📥 ${chat.title}` });
+        if (typeof r === 'string') return warn(c, r);
+        console.log(`  ${who} brought the Cowork chat “${chat.title}” onto ${floor.def.name} as ${r.name}`);
+        toastFloor(floor, `📥 ${who} brought in “${chat.title}” from Cowork: ${r.name} carries on with it`);
+        break;
+      }
+      case 'worker.move': {
+        const w = worker(msg.workerId);
+        const target = floors.get(str(msg.floor, 64));
+        if (!w || !target) return warn(c, !w ? 'No such worker' : 'No such floor');
+        const { floor, info } = w;
+        if (target === floor) return warn(c, `${info.name} is on ${target.def.name} already`);
+        const why =
+          info.kind !== 'agent' || (info.provider ?? floor.workers.defaultProvider) !== 'claude'
+            ? 'Only Claude Code workers can move floors'
+            : DESK_BY_ID.get(info.deskId)?.station
+              ? 'A board agent stays by its board'
+              : info.meeting
+                ? `${info.name} is in a meeting`
+                : info.worktree
+                  ? `${info.name} works in its own worktree of ${floor.def.name} — open a PR or send it home instead`
+                  : !info.sessionId
+                    ? `${info.name} hasn't started a conversation yet`
+                    : undefined;
+        if (why) return warn(c, why);
+        const desk = target.workers.freeSeat();
+        if (!desk) return warn(c, `Every desk on ${target.def.name} is taken`);
+        const transcript = floor.workers.sessionFile(info.id)!;
+        const sessionId = info.sessionId!;
+        // It stops here first, so its conversation is finished being written before it's copied.
+        void floor.workers.kill(info.id).then(() => {
+          const copy = copyClaudeSession(transcript, sessionId, target.dir);
+          if (typeof copy !== 'string') return warn(c, `${info.name} left ${floor.def.name} but couldn't move: ${copy.error}. Its conversation is still in ${transcript}`);
+          const r = target.workers.carryOn(target.workers.deskOccupied(desk) ? (target.workers.freeSeat() ?? desk) : desk, who, {
+            sessionId,
+            transcript: copy,
+            name: info.name,
+            color: info.color,
+            role: info.role,
+            model: info.model,
+            effort: info.effort,
+            title: info.title,
+            activity: info.activity,
+          });
+          if (typeof r === 'string') return warn(c, `${info.name} left ${floor.def.name} but couldn't sit down on ${target.def.name}: ${r}`);
+          toastFloor(floor, `🛗 ${who} sent ${info.name} up to ${target.def.name}`);
+          toastFloor(target, `🛗 ${info.name} arrived from ${floor.def.name}, conversation and all`);
+        });
+        break;
+      }
       case 'floor.remove': {
         // Everyone's workers on it stop: admins do it.
         if (!meOf(c.accountId).admin) return warn(c, 'Only admins can take a floor off the building');

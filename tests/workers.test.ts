@@ -1094,3 +1094,37 @@ test('a worker hired for a role is told what it is for on every start; a coder i
   const [coderLaunch] = await waitFor(() => launches(coder.id), (l) => l.length === 1);
   assert.equal(brief(coderLaunch.args), undefined);
 });
+
+test('a worker can sit down carrying on a conversation it already had, without its old spend counting as today’s', async (t) => {
+  const f = fixture();
+  const updates: WorkerInfo[] = [];
+  isolateProviderEnvironment(f, t);
+  const previousLog = process.env.FAKE_AGENT_LOG;
+  process.env.FAKE_AGENT_LOG = f.log;
+  t.after(() => {
+    if (previousLog === undefined) delete process.env.FAKE_AGENT_LOG;
+    else process.env.FAKE_AGENT_LOG = previousLog;
+    f.close();
+  });
+  const workers = manager(f, f.claude, updates);
+  t.after(() => workers.shutdown());
+  const transcript = path.join(f.root, 'carried.jsonl');
+  writeFileSync(
+    transcript,
+    JSON.stringify({ type: 'assistant', requestId: 'r1', message: { id: 'm1', model: 'claude-sonnet-4-5', usage: { input_tokens: 1000, output_tokens: 500 } } }) + '\n',
+  );
+
+  const seat = workers.freeSeat()!;
+  const r = workers.carryOn(seat, 'Sam', { sessionId: 'carried-1', transcript, name: 'Ada', role: 'assistant', title: 'Sales outreach' });
+  assert.equal(typeof r, 'object');
+  if (typeof r === 'string') return;
+  assert.equal(r.name, 'Ada');
+  assert.equal(r.sessionId, 'carried-1');
+  assert.equal(r.role, 'assistant');
+  assert.ok((r.usage?.output ?? 0) >= 500, 'it keeps what it spent before');
+  const [launch] = await waitFor(() => f.read().filter((x) => x.kind === 'claude' && x.env.workerId === r.id && x.args.includes('--settings')), (l) => l.length === 1);
+  assert.deepEqual(launch.args.slice(launch.args.indexOf('--resume'), launch.args.indexOf('--resume') + 2), ['--resume', 'carried-1']);
+  assert.notEqual(workers.freeSeat(), seat, 'its seat is taken');
+  assert.equal(workers.sessionFile(r.id), transcript);
+  assert.match(workers.carryOn(seat, 'Sam', { sessionId: 'x', transcript }) as string, /taken/);
+});

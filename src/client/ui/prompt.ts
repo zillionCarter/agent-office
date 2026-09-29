@@ -20,6 +20,8 @@ export interface PromptOptions {
   providerOption?: boolean;
   /** Offer what the worker is hired as: a coder, a personal assistant… (only when hiring a new worker). */
   roleOption?: boolean;
+  /** Offer bringing in a Cowork chat instead (only when hiring a new worker). */
+  onCowork?: () => void;
   onSubmit(text: string, opts: { worktree: boolean; provider?: AgentProvider; model?: string; effort?: AgentEffort; role?: WorkerRole }): void;
 }
 
@@ -63,19 +65,24 @@ export function openPrompt(opts: PromptOptions) {
   };
   const roleRow = opts.roleOption ? h('div', { style: 'margin:0 0 10px' }, h('label', { style: 'display:block;font-weight:800;margin:0 0 6px' }, 'Hire as'), roleChips, roleBlurb) : null;
   const submit = h('button.btn.primary', { type: 'submit' }, opts.submitLabel ?? 'Send ✨');
+  const cowork = opts.onCowork ? h('button.btn', { type: 'button', title: 'Carry on a chat from Claude’s Cowork mode instead' }, '📥 From Cowork') : null;
   const cancel = h('button.btn', { type: 'button' }, 'Cancel');
   const form = h(
     'form.modal',
     { role: 'dialog', 'aria-label': opts.title },
     h('header', {}, h('h2', {}, opts.title)),
     h('div.body', {}, opts.warning ? h('p.setting-note.bad', { style: 'margin:0 0 10px', role: 'alert' }, opts.warning) : null, opts.subtitle ? h('p', { style: 'margin:0 0 10px;font-weight:700;color:var(--muted)' }, opts.subtitle) : null, roleRow, ta, provider?.element ?? null, wtRow),
-    h('footer', {}, h('span.grow', {}, 'Enter to send · Shift+Enter for a new line'), cancel, submit),
+    h('footer', {}, h('span.grow', {}, 'Enter to send · Shift+Enter for a new line'), cowork, cancel, submit),
   ) as HTMLFormElement;
   form.noValidate = true;
   if (roleRow) paintRole();
 
   const modal = openModal(form);
   cancel.addEventListener('click', () => modal.close());
+  cowork?.addEventListener('click', () => {
+    modal.close();
+    opts.onCowork!();
+  });
   const send = () => {
     const text = ta.value.trim();
     if (!text && !opts.allowEmpty) {

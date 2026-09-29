@@ -12,7 +12,8 @@ import { FAILS_TO_DESPAIR, outputFailed, toolAction } from '../shared/actions.js
 import { FLAG_BOLD, FLAG_DIM, FLAG_INVERSE, RGB_FLAG, isAgentEffort, isClaudeModel } from '../shared/protocol.js';
 import { ROLE_BY_ID, isWorkerRole, type WorkerRole } from '../shared/roles.js';
 import { Worktrees, describeWork, type WorktreeCleanup, type WorktreeState } from './worktrees.js';
-import { DESK_BY_ID, STATION_AGENT } from '../shared/layout.js';
+import { DESK_BY_ID, STATION_AGENT, nextFreeSeat } from '../shared/layout.js';
+import { claudeProjectDir } from './sessions.js';
 import { QUEUE_AGENT_DISALLOWED_TOOLS, stationBrief } from './stations.js';
 import { officePrompt, type PromptSource } from './prompts.js';
 import { isBusy } from '../shared/status.js';
@@ -333,6 +334,72 @@ export class WorkerManager {
     if (info.prompt) this.notePrompt(w, info.prompt);
     // A board agent is told what it's there for ahead of its first request (which is what shows).
     this.launch(w, seat.station && info.prompt ? `${stationBrief(seat.station, this.prompts)}\n\n${info.prompt}` : info.prompt, undefined);
+    this.persist();
+    return info;
+  }
+
+  /** The first free desk (then bean bag) for a worker who arrives without anyone picking one. */
+  freeSeat(): string | undefined {
+    return nextFreeSeat((id) => this.deskOccupied(id))?.id;
+  }
+
+  /** Where a Claude worker's conversation is saved, if it has one. */
+  sessionFile(id: string): string | undefined {
+    const w = this.workers.get(id);
+    if (!w?.info.sessionId) return undefined;
+    return w.tracker.transcript ?? path.join(claudeProjectDir(this.cwd(w.info)), `${w.info.sessionId}.jsonl`);
+  }
+
+  /**
+   * Seats a Claude Code worker that carries on a conversation it already had: one moved here from
+   * another floor, or a chat brought in from Cowork. Its transcript must already be where a session
+   * started in this floor's folder is looked for (see sessions.ts). What it spent before is its own,
+   * not today's, so the tracker starts from the end of the transcript.
+   */
+  carryOn(deskId: string, by: string, a: { sessionId: string; transcript: string; name?: string; color?: string; role?: WorkerRole; model?: string; effort?: AgentEffort; title?: string; activity?: string }): WorkerInfo | string {
+    const seat = DESK_BY_ID.get(deskId);
+    if (!seat) return 'Unknown desk';
+    if (seat.station || seat.room) return 'Only a desk or a bean bag will do';
+    if (this.deskOccupied(deskId)) return `That ${seat.beanbag ? 'bean bag' : 'desk'} is taken`;
+    const paused = this.ledger.hiringPaused;
+    if (paused) return paused;
+    const full = this.capacity?.full();
+    if (full) return full;
+    const used = new Set([...this.workers.values()].map((w) => w.info.name.replace(/ 🐚$/, '')));
+    const name = a.name && !used.has(a.name) ? a.name : (NAMES.find((n) => !used.has(n)) ?? `Worker ${this.workers.size + 1}`);
+    const tracker = newTracker();
+    tracker.transcript = a.transcript;
+    try {
+      scanTracker(tracker);
+    } catch {
+      // unreadable: it counts from whatever it can read next time
+    }
+    const info: WorkerInfo = {
+      id: randomBytes(6).toString('hex'),
+      kind: 'agent',
+      provider: 'claude',
+      model: isClaudeModel(a.model) ? a.model : undefined,
+      effort: isAgentEffort(a.effort) ? a.effort : undefined,
+      role: roleOrNone(a.role),
+      deskId,
+      name,
+      color: a.color ?? COLORS[Math.floor(Math.random() * COLORS.length)],
+      status: 'starting',
+      acked: true,
+      createdBy: by,
+      createdAt: Date.now(),
+      sessionId: a.sessionId,
+      title: a.title,
+      activity: a.activity,
+      usage: trackerUsage(tracker),
+      cols: 100,
+      rows: 30,
+      viewers: [],
+      viewerIds: [],
+    };
+    const w = newWorker(info, tracker);
+    this.workers.set(info.id, w);
+    this.launch(w, undefined, a.sessionId);
     this.persist();
     return info;
   }
