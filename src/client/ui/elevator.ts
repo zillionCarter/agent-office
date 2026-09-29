@@ -1,4 +1,4 @@
-import type { FloorInfo, RepoChoice, ServerMsg } from '../../shared/protocol';
+import type { FloorInfo, FolderListing, RepoChoice, ServerMsg } from '../../shared/protocol';
 import { floorPalette, normalizeRepo, sameRepo } from '../../shared/floors';
 import { ROOF, ROOF_NAME } from '../../shared/rooftop';
 import type { Net } from '../net';
@@ -7,7 +7,8 @@ import { h, openModal, timeAgo, type Modal } from './dom';
 import { confirmDialog } from './prompt';
 
 // The elevator's panel: a button for every floor (every project), and "add a project", which clones
-// one of the repositories the office's gh login can see and makes it a new floor. The first time
+// one of the repositories the office's gh login can see and makes it a new floor, or makes any folder
+// on the office's machine a floor as it is, or sets up a personal assistant's floor. The first time
 // the office runs there are no floors, and this is where you start. Admins can take a floor off the
 // building here too; its checkout stays on disk.
 
@@ -22,11 +23,17 @@ const SHOWN = 60;
 const REPOS_STALE_MS = 5 * 60_000;
 
 const addedWaiters = new Set<(msg: Extract<ServerMsg, { t: 'floor.added' }>) => void>();
+const browseWaiters = new Set<(listing: FolderListing) => void>();
 
 /** Main feeds server messages through here, so a panel waiting on its clone hears back. */
 export function routeElevatorMessage(msg: ServerMsg) {
   if (msg.t === 'floor.added') for (const fn of addedWaiters) fn(msg);
+  if (msg.t === 'floor.browse') for (const fn of browseWaiters) fn(msg);
 }
+
+/** Where a new floor comes from: a GitHub repository, a folder that's already on this machine, or a new assistant's folder. */
+type AddMode = 'repo' | 'folder' | 'assistant';
+const MODE_KEY = 'agent-office.elevator-mode';
 
 let current: Modal | null = null;
 
@@ -44,6 +51,13 @@ export function openElevator(opts: ElevatorOptions): void {
   let adding: string | null = null;
   let error = '';
   let showAdd = setup || !store.floors.length;
+  let mode: AddMode = 'repo';
+  try {
+    const saved = localStorage.getItem(MODE_KEY);
+    if (saved === 'folder' || saved === 'assistant') mode = saved;
+  } catch {
+    // storage blocked
+  }
   /** The search box and list are in place (rebuilding them would lose the focus mid-typing). */
   let built = false;
 
@@ -194,10 +208,11 @@ export function openElevator(opts: ElevatorOptions): void {
 
   const renderAdd = () => {
     if (!showAdd) {
-      const open = h('button.btn', { type: 'button' }, '➕ Add a project');
+      const open = h('button.btn', { type: 'button' }, '➕ Add a floor');
       open.addEventListener('click', () => {
         showAdd = true;
-        needRepos();
+        if (mode === 'repo') needRepos();
+        if (mode === 'folder') browse('~');
         renderAdd();
         setTimeout(() => input.focus(), 0);
       });
@@ -227,18 +242,158 @@ export function openElevator(opts: ElevatorOptions): void {
         : h('p.note', {}, `Cloned into ${dest} with this machine's gh login. Everything on the new floor works in that checkout.`, change),
       ...[r.error, error].filter(Boolean).map((e) => h('p.err', {}, e)),
     );
-    addBtn.disabled = !!adding || !pick || store.floors.some((f) => sameRepo(f.repo, pick));
-    addBtn.textContent = adding ? '⏳ Cloning…' : pick ? `🛗 Add ${pick}` : '🛗 Add floor';
+    if (mode === 'repo') {
+      addBtn.disabled = !!adding || !pick || store.floors.some((f) => sameRepo(f.repo, pick));
+      addBtn.textContent = adding ? '⏳ Cloning…' : pick ? `🛗 Add ${pick}` : '🛗 Add floor';
+    }
     input.disabled = !!adding;
     if (!built) {
       built = true;
-      addEl.replaceChildren(
-        h('h3', {}, setup && !store.floors.length ? 'Pick your first project' : '➕ Add a project'),
-        h('div.repo-search', {}, input, refreshBtn),
-        listEl,
-        statusEl,
-        dirEl,
-      );
+      addEl.replaceChildren(h('h3', {}, setup && !store.floors.length ? 'Pick your first floor' : '➕ Add a floor'), tabsEl, repoPane, folderPane, assistantPane);
+    }
+    paintMode();
+  };
+
+  // ---- Tabs: where the new floor comes from ----
+  const tabsEl = h('div.seg.add-tabs', { role: 'tablist', 'aria-label': 'Add a floor from' });
+  const repoPane = h('div', {}, h('div.repo-search', {}, input, refreshBtn), listEl, statusEl, dirEl);
+  const TABS: [AddMode, string][] = [
+    ['repo', '🐙 GitHub repo'],
+    ['folder', '📁 Folder on this computer'],
+    ['assistant', '🤝 Personal assistant'],
+  ];
+  const setMode = (m: AddMode) => {
+    if (adding || m === mode) return;
+    mode = m;
+    error = '';
+    try {
+      localStorage.setItem(MODE_KEY, m);
+    } catch {
+      // storage blocked
+    }
+    if (m === 'repo') needRepos();
+    if (m === 'folder' && !listing) browse(folderInput.value || '~');
+    renderAdd();
+  };
+  const paintMode = () => {
+    tabsEl.replaceChildren(...TABS.map(([m, label]) => h('button.btn', { type: 'button', role: 'tab', 'aria-selected': String(m === mode), class: m === mode ? 'on' : '', disabled: !!adding && m !== mode, onclick: () => setMode(m) }, label)));
+    repoPane.classList.toggle('hidden', mode !== 'repo');
+    folderPane.classList.toggle('hidden', mode !== 'folder');
+    assistantPane.classList.toggle('hidden', mode !== 'assistant');
+    if (mode === 'folder') renderFolder();
+    if (mode === 'assistant') renderAssistant();
+  };
+
+  // ---- A folder on the office's machine, as it is ----
+  let listing: FolderListing | null = null;
+  const folderInput = h('input', { type: 'text', placeholder: '~/Documents/my-stuff', 'aria-label': 'Folder', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
+  const folderGo = h('button.btn', { type: 'button', title: 'Open this folder' }, 'Go');
+  const folderUp = h('button.btn', { type: 'button', title: 'The folder this one is in' }, '⬆');
+  const folderList = h('div.repo-list', { role: 'listbox', 'aria-label': 'Folders' });
+  const folderName = h('input', { type: 'text', placeholder: 'Floor name (optional)', 'aria-label': 'Floor name', maxlength: 100, autocomplete: 'off' }) as HTMLInputElement;
+  const folderCreate = h('input', { type: 'checkbox', id: 'folder-create' }) as HTMLInputElement;
+  const folderStatus = h('div');
+  const folderPane = h(
+    'div.hidden',
+    {},
+    h('div.repo-search', {}, folderUp, folderInput, folderGo),
+    folderList,
+    h('div.repo-search', { style: 'margin-top:8px' }, folderName),
+    h('label.check-row', { for: 'folder-create' }, folderCreate, 'Make the folder if it isn’t there yet'),
+    folderStatus,
+  );
+  const browse = (dir: string) => {
+    listing = null;
+    folderList.replaceChildren(h('p.empty', { style: 'padding:10px' }, 'Looking…'));
+    net.send({ t: 'floor.browse', dir });
+  };
+  const onBrowse = (l: FolderListing) => {
+    listing = l;
+    if (!l.error) folderInput.value = l.dir;
+    renderFolder();
+  };
+  browseWaiters.add(onBrowse);
+  const join = (dir: string, name: string) => `${dir.replace(/\/+$/, '')}/${name}`;
+  const renderFolder = () => {
+    const l = listing;
+    if (l) {
+      const rows: HTMLElement[] = l.folders.map((name) => {
+        const row = h('div.repo', { role: 'option', title: join(l.dir, name) }, h('span.nm', {}, `📁 ${name}`));
+        row.addEventListener('click', () => browse(join(l.dir, name)));
+        return row;
+      });
+      if (!rows.length) rows.push(h('p.empty', { style: 'padding:10px' }, l.error ? '' : 'No folders in here. You can still make this one a floor.'));
+      folderList.replaceChildren(...rows);
+      folderUp.disabled = !l.parent;
+    }
+    const here = l && !l.error ? l.dir : folderInput.value.trim();
+    const floor = l?.floor ? store.floors.find((f) => f.id === l.floor) : undefined;
+    folderStatus.replaceChildren(
+      adding ? h('p.note.busy', {}, `⏳ Setting up ${adding}…`) : h('p.note', {}, 'Any folder works: a project, a git checkout or not, your documents. Workers on the floor start in it. Click a folder to open it, then add the one you’re in.'),
+      ...[l?.error, floor ? `${floor.name} is already this folder's floor` : '', error].filter(Boolean).map((e) => h('p.err', {}, e as string)),
+    );
+    // The whole disk, or the whole home folder, is too big to be a floor (the office says so too).
+    const whole = here === '~' || here === '/' || here === '~/';
+    addBtn.disabled = !!adding || !here || !!floor || whole;
+    addBtn.textContent = adding ? '⏳ Adding…' : here ? `🛗 Add ${here.split('/').filter(Boolean).pop() ?? here}` : '🛗 Add floor';
+    folderInput.disabled = !!adding;
+  };
+  folderGo.addEventListener('click', () => browse(folderInput.value.trim() || '~'));
+  folderUp.addEventListener('click', () => listing?.parent && browse(listing.parent));
+  folderInput.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || e.isComposing) return;
+    e.preventDefault();
+    browse(folderInput.value.trim() || '~');
+  });
+  folderInput.addEventListener('input', () => {
+    // What's typed is what gets added, until it's opened.
+    listing = null;
+    renderFolder();
+  });
+
+  // ---- A personal assistant's floor ----
+  const assistantDir = h('input', { type: 'text', 'aria-label': 'Assistant folder', spellcheck: 'false', autocomplete: 'off' }) as HTMLInputElement;
+  const assistantName = h('input', { type: 'text', 'aria-label': 'Floor name', maxlength: 100, value: 'Personal assistant', autocomplete: 'off' }) as HTMLInputElement;
+  const assistantStatus = h('div');
+  const assistantPane = h(
+    'div.hidden',
+    {},
+    h(
+      'p.note',
+      { style: 'margin-top:0' },
+      'A floor for help with anything, not only code: questions, research, writing, plans, your files. Everyone you hire here is a personal assistant (pick Researcher, Writer or Planner when hiring for a specialist). ',
+      'They start in its folder, read ABOUT-ME.md there to learn about you, and keep their notes in notes/.',
+    ),
+    h('label', { style: 'display:block;font-weight:800;margin:10px 0 4px' }, 'Floor name'),
+    h('div.repo-search', {}, assistantName),
+    h('label', { style: 'display:block;font-weight:800;margin:10px 0 4px' }, 'Its folder (made if it isn’t there)'),
+    h('div.repo-search', {}, assistantDir),
+    assistantStatus,
+  );
+  const renderAssistant = () => {
+    if (!assistantDir.value) assistantDir.value = `${store.projectsDir.dir}/assistant`;
+    assistantStatus.replaceChildren(adding ? h('p.note.busy', {}, `⏳ Setting up ${adding}…`) : '', ...(error ? [h('p.err', {}, error)] : []));
+    addBtn.disabled = !!adding || !assistantDir.value.trim();
+    addBtn.textContent = adding ? '⏳ Adding…' : '🤝 Add assistant floor';
+    assistantDir.disabled = assistantName.disabled = !!adding;
+  };
+  assistantDir.addEventListener('input', renderAssistant);
+
+  const addFolder = (dir: string, name: string | undefined, create: boolean, assistant: boolean) => {
+    if (adding || !dir) return;
+    adding = dir;
+    error = '';
+    renderAdd();
+    net.send({ t: 'floor.addFolder', dir, name: name || undefined, create, kind: assistant ? 'assistant' : undefined });
+  };
+  const addCurrent = () => {
+    if (mode === 'folder') {
+      const dir = listing && !listing.error ? listing.dir : folderInput.value.trim();
+      addFolder(dir, folderName.value.trim(), folderCreate.checked, false);
+    } else if (mode === 'assistant') addFolder(assistantDir.value.trim(), assistantName.value.trim(), true, true);
+    else {
+      const pick = choice();
+      if (pick) add(pick);
     }
   };
 
@@ -277,10 +432,7 @@ export function openElevator(opts: ElevatorOptions): void {
     const pick = choice() ?? (q && matches.length === 1 ? matches[0].name : undefined);
     if (pick) add(pick);
   });
-  addBtn.addEventListener('click', () => {
-    const pick = choice();
-    if (pick) add(pick);
-  });
+  addBtn.addEventListener('click', addCurrent);
   refreshBtn.addEventListener('click', () => {
     store.repos = { ...store.repos, loading: true, error: undefined };
     renderAdd();
@@ -293,7 +445,7 @@ export function openElevator(opts: ElevatorOptions): void {
         {},
         store.floors.length
           ? 'Every project is a floor of this building. Pick a floor to ride to, or add another project.'
-          : "Every project is a floor of this building, and it doesn't have any yet. Pick one of your repositories: the office clones it and it becomes the first floor.",
+          : "Every project is a floor of this building, and it doesn't have any yet. Pick one of your repositories (the office clones it), any folder on this computer, or set up a personal assistant: it becomes the first floor.",
       )
     : null;
   const el = h(
@@ -311,13 +463,15 @@ export function openElevator(opts: ElevatorOptions): void {
     onClose: () => {
       current = null;
       addedWaiters.delete(onAdded);
+      browseWaiters.delete(onBrowse);
       for (const off of unsubs) off();
     },
   });
   current = modal;
   close?.addEventListener('click', () => modal.close());
   renderFloors();
-  if (showAdd) needRepos();
+  if (showAdd && mode === 'repo') needRepos();
+  if (showAdd && mode === 'folder') browse('~');
   renderAdd();
-  if (showAdd) setTimeout(() => input.focus(), 30);
+  if (showAdd && mode === 'repo') setTimeout(() => input.focus(), 30);
 }

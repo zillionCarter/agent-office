@@ -163,6 +163,7 @@ export class Floor {
       ctx.capacity,
       ctx.prompts,
     );
+    if (def.kind === 'assistant') this.workers.defaultRole = 'assistant';
 
     this.github = new GitHub(
       def.dir,
@@ -299,6 +300,7 @@ export class Floor {
       repo: this.def.repo,
       dir: this.dir,
       palette: this.def.palette,
+      kind: this.def.kind,
       addedBy: this.def.addedBy,
       addedAt: this.def.addedAt,
       workers: ws.filter((w) => !DESK_BY_ID.get(w.deskId)?.station).length,

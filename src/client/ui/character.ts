@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OutlineEffect } from 'three/examples/jsm/effects/OutlineEffect.js';
-import { HAIR_COLOR_NAMES, HAIR_COLORS, HAIR_STYLES, SKIN_TONES, randomLook, type Look } from '../../shared/avatar';
+import { BEARDS, EYE_STYLES, GLASSES, HAIR_COLOR_NAMES, HAIR_COLORS, HAIR_STYLES, HATS, HAT_COLORS, PANTS_COLOR_NAMES, PANTS_COLORS, SKIN_TONES, randomLook, type Look } from '../../shared/avatar';
 import { AVATAR_COLORS, saveProfile, store, type Profile } from '../state';
 import { Person } from '../world/character';
 import { toonUnique } from '../world/toon';
@@ -149,6 +149,15 @@ export function openCharacter(first: boolean, onSave: (p: Profile) => void) {
   const styleRow = h('div.seg', { role: 'radiogroup', 'aria-label': 'Hair style' });
   const hairRow = h('div.swatches', { role: 'radiogroup', 'aria-label': 'Hair color' });
   const shirtRow = h('div.swatches', { role: 'radiogroup', 'aria-label': 'Shirt color' });
+  const pantsRow = h('div.swatches', { role: 'radiogroup', 'aria-label': 'Pants color' });
+  const eyesRow = h('div.seg', { role: 'radiogroup', 'aria-label': 'Eyes' });
+  const hatRow = h('div.seg', { role: 'radiogroup', 'aria-label': 'Hat' });
+  const hatColorRow = h('div.swatches.hat-colors', { role: 'radiogroup', 'aria-label': 'Hat color' });
+  const glassesRow = h('div.seg', { role: 'radiogroup', 'aria-label': 'Glasses' });
+  const beardRow = h('div.seg', { role: 'radiogroup', 'aria-label': 'Facial hair' });
+  // Any shirt color at all, besides the swatches.
+  const shirtPicker = h('input.swatch.custom', { type: 'color', 'aria-label': 'Any shirt color', title: 'Pick any color' }) as HTMLInputElement;
+  shirtPicker.addEventListener('input', () => change({}, shirtPicker.value));
 
   const swatch = (color: string, label: string, on: boolean, choose: () => void) =>
     h('button.swatch', { type: 'button', role: 'radio', 'aria-checked': String(on), style: `background:${color}`, class: on ? 'sel' : '', 'aria-label': label, title: label, onclick: choose });
@@ -162,8 +171,19 @@ export function openCharacter(first: boolean, onSave: (p: Profile) => void) {
     paint();
   };
 
+  /** A row of named buttons, one of which is picked. */
+  const seg = (row: HTMLElement, names: string[], on: number, choose: (i: number) => void) =>
+    row.replaceChildren(...names.map((name, i) => h('button.btn', { type: 'button', role: 'radio', 'aria-checked': String(i === on), class: i === on ? 'on' : '', onclick: () => choose(i) }, name)));
+
   const paint = () => {
-    const { skin, hair, style } = pick.look;
+    const { skin, hair, style, pants, eyes, hat, hatColor, glasses, beard } = pick.look;
+    seg(eyesRow, EYE_STYLES, eyes, (i) => change({ eyes: i }));
+    seg(hatRow, HATS, hat, (i) => change({ hat: i }));
+    hatColorRow.replaceChildren(...HAT_COLORS.map((c, i) => swatch(c, `Hat color ${i + 1}`, i === hatColor, () => change({ hatColor: i }))));
+    hatColorRow.classList.toggle('hidden', HATS[hat] === 'None');
+    seg(glassesRow, GLASSES, glasses, (i) => change({ glasses: i }));
+    seg(beardRow, BEARDS, beard, (i) => change({ beard: i }));
+    pantsRow.replaceChildren(...PANTS_COLORS.map((c, i) => swatch(c, PANTS_COLOR_NAMES[i], i === pants, () => change({ pants: i }))));
     skinRow.replaceChildren(...SKIN_TONES.map((c, i) => swatch(c, `Skin tone ${i + 1} of ${SKIN_TONES.length}`, i === skin, () => change({ skin: i }))));
     styleRow.replaceChildren(
       ...HAIR_STYLES.map((name, i) =>
@@ -171,7 +191,9 @@ export function openCharacter(first: boolean, onSave: (p: Profile) => void) {
       ),
     );
     hairRow.replaceChildren(...HAIR_COLORS.map((c, i) => swatch(c, HAIR_COLOR_NAMES[i], i === hair, () => change({ hair: i }))));
-    shirtRow.replaceChildren(...AVATAR_COLORS.map((c) => swatch(c, `Shirt ${c}`, c === pick.color, () => change({}, c))));
+    shirtRow.replaceChildren(...AVATAR_COLORS.map((c) => swatch(c, `Shirt ${c}`, c === pick.color, () => change({}, c))), shirtPicker);
+    shirtPicker.value = pick.color;
+    shirtPicker.classList.toggle('sel', !AVATAR_COLORS.includes(pick.color));
   };
   paint();
 
@@ -200,8 +222,19 @@ export function openCharacter(first: boolean, onSave: (p: Profile) => void) {
         styleRow,
         h('label', {}, 'Hair color'),
         hairRow,
+        h('label', {}, 'Eyes'),
+        eyesRow,
+        h('label', {}, 'Facial hair'),
+        beardRow,
+        h('label', {}, 'Glasses'),
+        glassesRow,
+        h('label', {}, 'Hat'),
+        hatRow,
+        hatColorRow,
         h('label', {}, 'Shirt'),
         shirtRow,
+        h('label', {}, 'Pants'),
+        pantsRow,
       ),
     ),
     h('footer', {}, surprise, h('span.grow'), save),

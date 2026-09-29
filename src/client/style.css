@@ -339,6 +339,12 @@ button { font-family: inherit; }
 .charsel .swatches { margin-top: 0; }
 .charsel .seg { gap: 6px; }
 .charsel .seg .btn { padding: 4px 10px; font-size: 13px; }
+.charsel-opts { max-height: min(62vh, 560px); overflow-y: auto; padding-right: 6px; }
+.charsel .swatches.hidden { display: none; }
+.charsel .hat-colors { margin-top: 8px; }
+.swatch.custom { padding: 0; overflow: hidden; cursor: pointer; background: conic-gradient(#ef476f, #ffd166, #06d6a0, #4f86f7, #9d4edd, #ef476f); }
+.swatch.custom::-webkit-color-swatch-wrapper { padding: 0; opacity: 0; }
+.swatch.custom::-moz-color-swatch { opacity: 0; }
 @media (max-width: 640px) {
   .charsel .body { grid-template-columns: 1fr; }
   .charsel-stage { min-height: 230px; }
@@ -994,6 +1000,12 @@ a.when:hover { text-decoration: underline; }
 .elevator .note.busy { color: var(--ink); }
 .elevator .dir-change { margin-left: 6px; padding: 1px 8px; font-size: 12px; border-width: 2px; border-radius: 9px; box-shadow: 0 2px 0 var(--ink); vertical-align: baseline; }
 .elevator .dir-pick { margin-top: 8px; }
+.elevator .add-tabs { flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.elevator .add-tabs .btn { padding: 4px 10px; font-size: 13px; }
+.elevator .check-row { display: flex; gap: 8px; align-items: center; margin: 8px 0 0; font-size: 13px; font-weight: 700; cursor: pointer; }
+.elevator .repo-search > input:only-child { flex: 1; }
+.role-seg { flex-wrap: wrap; gap: 6px; }
+.role-seg .btn { padding: 4px 10px; font-size: 13px; }
 .elevator .err { margin: 8px 0 0; font-size: 13px; font-weight: 800; color: var(--bad); overflow-wrap: anywhere; }
 
 /* ---------- Whiteboard ---------- */

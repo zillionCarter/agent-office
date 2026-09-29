@@ -1055,3 +1055,42 @@ test('stopping the office on purpose (Ctrl+C) leaves nothing to carry on', async
   assert.ok(resumed.args.includes('stopped'));
   assert.equal(promptOf(resumed), undefined);
 });
+
+test('a worker hired for a role is told what it is for on every start; a coder is told nothing', async (t) => {
+  const f = fixture();
+  const updates: WorkerInfo[] = [];
+  isolateProviderEnvironment(f, t);
+  const previousLog = process.env.FAKE_AGENT_LOG;
+  process.env.FAKE_AGENT_LOG = f.log;
+  t.after(() => {
+    if (previousLog === undefined) delete process.env.FAKE_AGENT_LOG;
+    else process.env.FAKE_AGENT_LOG = previousLog;
+    f.close();
+  });
+  const workers = manager(f, f.claude, updates);
+  t.after(() => workers.shutdown());
+  const launches = (id: string) => f.read().filter((r) => r.kind === 'claude' && r.args.includes('--settings') && r.stdin === undefined && r.env.workerId === id);
+  const brief = (args: string[]) => {
+    const i = args.indexOf('--append-system-prompt');
+    return i < 0 ? undefined : args[i + 1];
+  };
+
+  const helper = workers.spawn('desk-1', 'Sam', 'Plan my week', false, 'agent', 'claude', undefined, undefined, undefined, 'assistant');
+  assert.equal(typeof helper, 'object');
+  if (typeof helper === 'string') return;
+  assert.equal(helper.role, 'assistant');
+  const [first] = await waitFor(() => launches(helper.id), (l) => l.length === 1);
+  assert.match(brief(first.args) ?? '', /personal assistant/);
+  assert.ok(first.args.indexOf('--append-system-prompt') < first.args.indexOf('--'), 'the brief comes before the prompt');
+  assert.equal(first.args.at(-1), 'Plan my week', 'the prompt itself is left as it was');
+
+  // An assistant's floor hires assistants unless asked for a coder, who is saved as no role at all.
+  workers.defaultRole = 'assistant';
+  const coder = workers.spawn('desk-2', 'Sam', 'Fix the build', false, 'agent', 'claude', undefined, undefined, undefined, 'coder');
+  const other = workers.spawn('desk-3', 'Sam', 'Anything', false, 'agent', 'claude');
+  if (typeof coder === 'string' || typeof other === 'string') return assert.fail('hired');
+  assert.equal(coder.role, undefined);
+  assert.equal(other.role, 'assistant');
+  const [coderLaunch] = await waitFor(() => launches(coder.id), (l) => l.length === 1);
+  assert.equal(brief(coderLaunch.args), undefined);
+});

@@ -1,6 +1,7 @@
 // Wire protocol between browser and server. Every WebSocket frame is one JSON object.
 
 import type { Look } from './avatar.js';
+import type { WorkerRole } from './roles.js';
 import type { CabinetFrame, CabinetState, CabinetView } from './cabinet.js';
 import type { DecorPlacement, Decoration } from './decor.js';
 import type { DogState } from './dog.js';
@@ -85,6 +86,8 @@ export interface WorkerInfo {
   model?: string;
   /** Reasoning effort requested for this worker, when one was chosen (Claude only). */
   effort?: AgentEffort;
+  /** What it was hired as (see shared/roles.ts); none is a coder. */
+  role?: WorkerRole;
   deskId: string;
   name: string;
   color: string;
@@ -641,6 +644,8 @@ export interface FloorInfo {
   cloning?: boolean;
   /** The project the office was started in (`agent-office <dir>`): the office keeps its own data in its checkout. */
   local?: boolean;
+  /** A personal assistant's floor rather than a project's. */
+  kind?: FloorKind;
   addedBy: string;
   addedAt: number;
   /**
@@ -652,6 +657,22 @@ export interface FloorInfo {
   /** Workers waiting on someone: a question, a permission, or a finished turn nobody looked at. */
   waiting: number;
   people: number;
+}
+
+/** What a floor is for: a project (the default) or a personal assistant, who helps with anything. */
+export type FloorKind = 'assistant';
+
+/** The folders in a folder on the office's machine, for the elevator's "add a folder". */
+export interface FolderListing {
+  /** For showing people: under the home folder it's ~/…. */
+  dir: string;
+  /** The folder it's in; none at the top of the disk. */
+  parent?: string;
+  /** The folders in it, hidden ones left out. */
+  folders: string[];
+  /** It's a floor already: its id. */
+  floor?: string;
+  error?: string;
 }
 
 /** Where the elevator's "add a project" clones to: <dir>/<owner>/<repo> on the office's machine. */
@@ -976,7 +997,7 @@ export type ClientMsg =
   | { t: 'emote'; emote: EmoteId }
   | { t: 'profile'; name: string; color: string; look: Look }
   /** With `issue`, the worker is there for that GitHub issue: it's assigned on GitHub (so it moves to In progress) and taken off the queue. */
-  | { t: 'worker.spawn'; deskId: string; prompt?: string; worktree?: boolean; kind?: WorkerKind; provider?: AgentProvider; model?: string; effort?: AgentEffort; issue?: number }
+  | { t: 'worker.spawn'; deskId: string; prompt?: string; worktree?: boolean; kind?: WorkerKind; provider?: AgentProvider; model?: string; effort?: AgentEffort; issue?: number; role?: WorkerRole }
   | { t: 'worker.resume'; workerId: string }
   | { t: 'worker.kill'; workerId: string; cleanup?: WorktreeCleanup }
   /** Asks what the worker's worktree holds; answered with a `worker.worktree` message. */
@@ -1097,6 +1118,14 @@ export type ClientMsg =
   | { t: 'floor.repos'; refresh?: boolean }
   /** Clone a repository and make it a new floor; answered with `floor.added` once it's there. */
   | { t: 'floor.add'; repo: string }
+  /**
+   * Make a folder on the office's machine a floor, as it is: no GitHub needed. `create` makes the
+   * folder if it isn't there; `kind: 'assistant'` makes it a personal assistant's floor. Answered with
+   * `floor.added`, whose `repo` is the `dir` asked for.
+   */
+  | { t: 'floor.addFolder'; dir: string; name?: string; create?: boolean; kind?: FloorKind }
+  /** The folders in a folder, for picking one; answered with `floor.browse`. */
+  | { t: 'floor.browse'; dir: string }
   /** Take a floor off the building (admins only). Its checkout stays on disk; everyone on it rides to another floor. */
   | { t: 'floor.remove'; floor: string }
   /** Dress the building up for a holiday, take the decorations down ('off'), or follow the calendar ('auto'). */
@@ -1153,6 +1182,7 @@ export type ServerMsg =
   | { t: 'floors'; floors: FloorInfo[] }
   /** Sent to whoever asked. */
   | { t: 'floor.repos'; repos: RepoChoice[]; error?: string }
+  | ({ t: 'floor.browse' } & FolderListing)
   /** Sent to whoever asked for the floor, once it's cloned (or couldn't be). */
   | { t: 'floor.added'; repo: string; floor?: string; error?: string }
   /** The projects folder moved (see floor.projectsDir). */

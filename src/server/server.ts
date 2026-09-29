@@ -37,7 +37,8 @@ import { checkFrame, scoreText, type CabinetFrame, type CabinetState } from '../
 import { SEARCH_MAX, SEARCH_MIN, searchKey } from '../shared/search.js';
 import { WB_MAX_FILE_BYTES } from '../shared/whiteboard.js';
 import { MAX_FLOORS } from '../shared/floors.js';
-import { lookFromSeed, sanitizeLook } from '../shared/avatar.js';
+import { LOOK_KEYS, lookFromSeed, sanitizeLook } from '../shared/avatar.js';
+import { ROLE_BY_ID, isWorkerRole } from '../shared/roles.js';
 import { EMOTE_EVERY, EmoteBucket, isEmote } from '../shared/emotes.js';
 import { isThemePick } from '../shared/theme.js';
 import { PROMPTS, PROMPT_MAX, isPromptId } from '../shared/prompts.js';
@@ -923,7 +924,7 @@ export async function startServer(cfg: Config) {
         id,
         name,
         color: COLOR_RE.test(colorParam) ? colorParam : '#4f86f7',
-        look: sanitizeLook({ skin: intParam('skin'), hair: intParam('hair'), style: intParam('style') }, lookFromSeed(id)),
+        look: sanitizeLook(Object.fromEntries(LOOK_KEYS.filter((k) => url.searchParams.has(k)).map((k) => [k, intParam(k)])), lookFromSeed(id)),
         x: spot.x,
         y: 0,
         z: spot.z,
@@ -1266,6 +1267,28 @@ export async function startServer(cfg: Config) {
           });
         break;
       }
+      case 'floor.addFolder': {
+        const dir = str(msg.dir, 1024);
+        const kind = msg.kind === 'assistant' ? 'assistant' : undefined;
+        const r = building.addFolder(dir, who, { name: msg.name === undefined ? undefined : str(msg.name, 100), create: msg.create === true, kind });
+        if (typeof r === 'string') {
+          sendTo(c, { t: 'floor.added', repo: dir, error: r });
+          break;
+        }
+        const floor = openFloor(r);
+        floorsChanged();
+        if (!floor) {
+          sendTo(c, { t: 'floor.added', repo: dir, error: `Added ${r.dir}, but couldn't open its floor — see the office's log` });
+          break;
+        }
+        console.log(`  ${who} added a floor for the folder ${r.dir}`);
+        toastAll(`🛗 New floor: ${r.name}, added by ${who}`);
+        sendTo(c, { t: 'floor.added', repo: dir, floor: floor.id });
+        break;
+      }
+      case 'floor.browse':
+        sendTo(c, { t: 'floor.browse', ...building.browse(str(msg.dir, 1024)) });
+        break;
       case 'floor.remove': {
         // Everyone's workers on it stop: admins do it.
         if (!meOf(c.accountId).admin) return warn(c, 'Only admins can take a floor off the building');
@@ -1318,10 +1341,11 @@ export async function startServer(cfg: Config) {
         }
         const model = msg.model === undefined ? undefined : str(msg.model, OPEN_CODE_MODEL_MAX + 1);
         const effort = isAgentEffort(msg.effort) ? msg.effort : undefined;
-        const r = floor.workers.spawn(str(msg.deskId, 32), who, str(msg.prompt, 20000) || undefined, msg.worktree === true, kind, msg.provider, model, effort);
+        const role = kind === 'agent' && isWorkerRole(msg.role) ? msg.role : undefined;
+        const r = floor.workers.spawn(str(msg.deskId, 32), who, str(msg.prompt, 20000) || undefined, msg.worktree === true, kind, msg.provider, model, effort, undefined, role);
         const issue = kind === 'agent' ? issueNumber(msg.issue) : undefined;
         if (typeof r === 'string') warn(c, r);
-        else toastFloor(floor, kind === 'shell' ? `${who} opened a shell at a desk` : `${who} hired ${r.name}${issue ? ` for issue #${issue}` : r.prompt ? ' with a task' : ''}`);
+        else toastFloor(floor, kind === 'shell' ? `${who} opened a shell at a desk` : `${who} hired ${r.name}${r.role ? ` as ${ROLE_BY_ID.get(r.role)?.label.toLowerCase()}` : ''}${issue ? ` for issue #${issue}` : r.prompt ? ' with a task' : ''}`);
         if (typeof r !== 'string' && issue) takeIssue(c, floor, issue);
         break;
       }

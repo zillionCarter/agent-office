@@ -3,7 +3,8 @@ import { accessSync, constants, existsSync, mkdirSync, readFileSync, readdirSync
 import os from 'node:os';
 import path from 'node:path';
 import { FLOOR_PALETTES, MAX_FLOORS, normalizeRepo, sameRepo } from '../shared/floors.js';
-import type { ProjectsDirState, RepoChoice } from '../shared/protocol.js';
+import type { FloorKind, FolderListing, ProjectsDirState, RepoChoice } from '../shared/protocol.js';
+import { assistantHome } from './assistant.js';
 import { gh } from './github.js';
 
 /** A floor as floors.json keeps it. */
@@ -14,6 +15,8 @@ export interface FloorDef {
   repo?: string;
   dir: string;
   palette: number;
+  /** A personal assistant's floor rather than a project's: its workers are hired as assistants. */
+  kind?: FloorKind;
   addedBy: string;
   addedAt: number;
 }
@@ -212,6 +215,73 @@ export class Building {
     return def;
   }
 
+  /**
+   * Makes a folder on the office's machine a floor as it is, with no cloning: any folder, a git
+   * checkout or not. `create` makes it first if it isn't there yet. An assistant floor also gets its
+   * brief (see assistant.ts). Returns the floor, or why it can't.
+   */
+  addFolder(raw: string, by: string, opts: { name?: string; create?: boolean; kind?: FloorKind } = {}): FloorDef | string {
+    const text = raw.trim();
+    if (!text) return 'Pick a folder';
+    const typed = untildify(text);
+    if (!path.isAbsolute(typed)) return 'Use a full path, like ~/Documents/notes';
+    const dir = path.resolve(typed);
+    if (dir === path.parse(dir).root || dir === os.homedir()) return `${tildify(dir)} is too big to be a floor — pick a folder inside it`;
+    if (this.defs.length + this.cloning.size >= MAX_FLOORS) return `The building is full (${MAX_FLOORS} floors)`;
+    const same = this.defs.find((d) => path.resolve(d.dir) === dir);
+    if (same) return `${tildify(dir)} is already the ${same.name} floor`;
+    // One floor inside another's folder would put its .agent-office (and its workers' files) in the other's.
+    const outer = this.defs.find((d) => within(dir, path.resolve(d.dir)));
+    if (outer) return `${tildify(dir)} is inside the ${outer.name} floor's folder — pick one outside every floor`;
+    const inner = this.defs.find((d) => within(path.resolve(d.dir), dir));
+    if (inner) return `${tildify(dir)} holds the ${inner.name} floor's folder — pick one that doesn't`;
+    if (!existsSync(dir)) {
+      if (!opts.create) return `There's no folder at ${tildify(dir)}`;
+      try {
+        mkdirSync(dir, { recursive: true });
+      } catch (err) {
+        return `Couldn't make ${tildify(dir)}: ${(err as Error).message}`;
+      }
+    }
+    try {
+      if (!statSync(dir).isDirectory()) return `${tildify(dir)} isn't a folder`;
+      accessSync(dir, constants.R_OK | constants.W_OK);
+    } catch {
+      return `The office can't read and write in ${tildify(dir)}`;
+    }
+    if (opts.kind === 'assistant') {
+      const err = assistantHome(dir);
+      if (err) return err;
+    }
+    const name = opts.name?.trim().slice(0, 100) || path.basename(dir);
+    const def = this.newDef(name, originRepo(dir), dir, by);
+    if (opts.kind) def.kind = opts.kind;
+    this.defs.push(def);
+    this.save();
+    return def;
+  }
+
+  /** The folders in `raw` ('' is the home folder), for picking one to make a floor. */
+  browse(raw: string): FolderListing {
+    const text = raw.trim() || '~';
+    const typed = untildify(text);
+    if (!path.isAbsolute(typed)) return { dir: text, folders: [], error: 'Use a full path, like ~/Documents' };
+    const dir = path.resolve(typed);
+    const parent = path.dirname(dir) === dir ? undefined : tildify(path.dirname(dir));
+    try {
+      const folders = readdirSync(dir, { withFileTypes: true })
+        .filter((e) => !e.name.startsWith('.') && (e.isDirectory() || (e.isSymbolicLink() && isDir(path.join(dir, e.name)))))
+        .map((e) => e.name)
+        .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+        .slice(0, 500);
+      const floor = this.defs.find((d) => path.resolve(d.dir) === dir);
+      return { dir: tildify(dir), parent, folders, floor: floor?.id };
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      return { dir: tildify(dir), parent, folders: [], error: code === 'ENOENT' ? `There's no folder at ${tildify(dir)}` : code === 'ENOTDIR' ? `${tildify(dir)} isn't a folder` : `Couldn't open ${tildify(dir)}` };
+    }
+  }
+
   /** Repositories the office's `gh` login can clone, most recently pushed first. */
   async repos(refresh = false): Promise<RepoChoice[]> {
     const cached = this.repoCache;
@@ -251,6 +321,7 @@ export class Building {
           repo: normalizeRepo(s.repo),
           dir: s.dir,
           palette: Number.isInteger(s.palette) && (s.palette as number) >= 0 ? (s.palette as number) : 0,
+          kind: s.kind === 'assistant' ? 'assistant' : undefined,
           addedBy: typeof s.addedBy === 'string' ? s.addedBy : '?',
           addedAt: typeof s.addedAt === 'number' ? s.addedAt : Date.now(),
         });
@@ -305,6 +376,14 @@ export class Building {
 export function tildify(p: string): string {
   const home = os.homedir();
   return p === home || p.startsWith(home + path.sep) ? `~${p.slice(home.length)}` : p;
+}
+
+function isDir(p: string): boolean {
+  try {
+    return statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 function untildify(p: string): string {

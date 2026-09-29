@@ -10,6 +10,7 @@ import serialize from '@xterm/addon-serialize';
 import type { AgentChoice, AgentEffort, AgentProvider, Run, TerminalHit, WorkerInfo, WorkerKind, WorkerStatus, WorkerTask } from '../shared/protocol.js';
 import { FAILS_TO_DESPAIR, outputFailed, toolAction } from '../shared/actions.js';
 import { FLAG_BOLD, FLAG_DIM, FLAG_INVERSE, RGB_FLAG, isAgentEffort, isClaudeModel } from '../shared/protocol.js';
+import { ROLE_BY_ID, isWorkerRole, type WorkerRole } from '../shared/roles.js';
 import { Worktrees, describeWork, type WorktreeCleanup, type WorktreeState } from './worktrees.js';
 import { DESK_BY_ID, STATION_AGENT } from '../shared/layout.js';
 import { QUEUE_AGENT_DISALLOWED_TOOLS, stationBrief } from './stations.js';
@@ -146,6 +147,8 @@ export class WorkerManager {
   private trees: Worktrees;
   private agentPath: string | null = null;
   readonly defaultProvider: AgentProvider;
+  /** What its agents are hired as when nobody picks: an assistant's floor hires assistants. */
+  defaultRole?: WorkerRole;
   private openCodePlugin: string;
   private codexHook: string;
   /** Where the office-queue command is, for the board agents' PATH (see writeQueueCommand). */
@@ -268,7 +271,7 @@ export class WorkerManager {
    * Hires a worker at a desk. `meeting` seats one at the meeting room's table instead, for that meeting
    * (see meetings.ts), in the meeting's own worktree, which everyone at the table shares.
    */
-  spawn(deskId: string, by: string, prompt?: string, worktree = false, kind: WorkerKind = 'agent', provider?: AgentProvider, model?: string, effort?: AgentEffort, meeting?: { id: string; worktree?: WorkerInfo['worktree'] }): WorkerInfo | string {
+  spawn(deskId: string, by: string, prompt?: string, worktree = false, kind: WorkerKind = 'agent', provider?: AgentProvider, model?: string, effort?: AgentEffort, meeting?: { id: string; worktree?: WorkerInfo['worktree'] }, role?: WorkerRole): WorkerInfo | string {
     // Nobody picked (a board agent, say): the office's default worker, model and effort included.
     if (kind === 'agent' && provider === undefined) ({ provider, model, effort } = this.officeDefault);
     const selectedProvider = kind === 'agent' ? provider : undefined;
@@ -307,6 +310,8 @@ export class WorkerManager {
       provider: selectedProvider,
       model: selectedProvider === 'opencode' || selectedProvider === 'claude' ? model : undefined,
       effort: selectedProvider === 'claude' ? effort : undefined,
+      // Board agents and meetings have briefs of their own; everyone else is what they were hired as, or what the floor hires.
+      role: kind === 'agent' && !seat.station && !meeting ? roleOrNone(role ?? this.defaultRole) : undefined,
       deskId,
       name: kind === 'shell' ? `${name} 🐚` : name,
       color: kind === 'shell' ? '#8d99ae' : agent ? agent.color : COLORS[Math.floor(Math.random() * COLORS.length)],
@@ -906,6 +911,9 @@ export class WorkerManager {
     const command = this.command(info);
     const commandPath = isShell ? undefined : configured ? this.agentPath : resolveCommand(command);
     let args = isShell ? (WIN && !process.env.SHELL ? [] : ['-l']) : configured ? [...this.agentArgs] : [];
+    const brief = !isShell && info.role ? ROLE_BY_ID.get(info.role)?.brief : undefined;
+    // OpenCode and Codex have no system prompt to add to: a new session gets the brief ahead of its first request instead.
+    if (brief && !isClaude && !resumeSessionId) prompt = prompt ? `${brief}\n\n---\n\n${prompt}` : `${brief}\n\n---\n\nSay hello in one line and ask what I need.`;
     if (isClaude) {
       args.unshift('--settings', this.settingsPath);
       // A model/effort chosen for this worker overrides whatever --agent-args set office-wide.
@@ -913,6 +921,8 @@ export class WorkerManager {
       if (info.effort) args.push('--effort', info.effort);
       // The queue agent only ever adds to the queue: without these it can't touch the checkout's files.
       if (station === 'queue') args.push('--disallowedTools', ...QUEUE_AGENT_DISALLOWED_TOOLS);
+      // Its role's brief rides along on every start, so a resumed session is still told.
+      if (brief) args.push('--append-system-prompt', brief);
       if (resumeSessionId) args.push('--resume', resumeSessionId);
       // `--` so a prompt like "- fix login" is never parsed as a CLI option.
       if (prompt) args.push('--', prompt);
@@ -1331,6 +1341,7 @@ process.stdin.on('end', () => {
       provider: info.provider,
       model: info.model,
       effort: info.effort,
+      role: info.role,
       deskId: info.deskId,
       name: info.name,
       color: info.color,
@@ -1380,6 +1391,7 @@ process.stdin.on('end', () => {
           provider,
           model: provider === 'opencode' && isValidOpenCodeModel(s.model) ? s.model : provider === 'claude' && isClaudeModel(s.model) ? s.model : undefined,
           effort: provider === 'claude' && isAgentEffort(s.effort) ? s.effort : undefined,
+          role: isWorkerRole(s.role) ? roleOrNone(s.role) : undefined,
           deskId: s.deskId,
           name: s.name ?? 'Worker',
           color: s.color ?? COLORS[0],
@@ -1679,4 +1691,9 @@ function safeEq(a: string, b: string) {
   let r = 0;
   for (let i = 0; i < a.length; i++) r |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return r === 0;
+}
+
+/** A coder is what a worker with no role is, so it isn't saved as one. */
+function roleOrNone(role: WorkerRole | undefined): WorkerRole | undefined {
+  return role === 'coder' ? undefined : role;
 }

@@ -2,6 +2,7 @@ import type { AgentEffort, AgentProvider, ServerMsg, WorktreeCleanup, WorktreeSt
 import { h, openModal } from './dom';
 import { store } from '../state';
 import { providerPicker, type ProviderPicker } from './provider';
+import { ROLES, ROLE_BY_ID, type WorkerRole } from '../../shared/roles';
 
 export interface PromptOptions {
   title: string;
@@ -17,7 +18,9 @@ export interface PromptOptions {
   worktreeOption?: boolean;
   /** Offer the configured agent provider choice (only when hiring a new worker). */
   providerOption?: boolean;
-  onSubmit(text: string, opts: { worktree: boolean; provider?: AgentProvider; model?: string; effort?: AgentEffort }): void;
+  /** Offer what the worker is hired as: a coder, a personal assistant… (only when hiring a new worker). */
+  roleOption?: boolean;
+  onSubmit(text: string, opts: { worktree: boolean; provider?: AgentProvider; model?: string; effort?: AgentEffort; role?: WorkerRole }): void;
 }
 
 const WT_KEY = 'agent-office.worktree';
@@ -44,16 +47,32 @@ export function openPrompt(opts: PromptOptions) {
     )
     : null;
   const provider: ProviderPicker | null = opts.providerOption ? providerPicker(store.project, 'prompt-provider') : null;
+  // An assistant's floor hires assistants unless you pick otherwise; a project's floor hires coders.
+  let role: WorkerRole = store.floors.find((f) => f.id === store.floor)?.kind === 'assistant' ? 'assistant' : 'coder';
+  const roleChips = h('div.seg.role-seg', { role: 'radiogroup', 'aria-label': 'Hire as' });
+  const roleBlurb = h('p.setting-note', { style: 'margin:6px 0 0' });
+  const paintRole = () => {
+    roleChips.replaceChildren(
+      ...ROLES.map((r) =>
+        h('button.btn', { type: 'button', role: 'radio', 'aria-checked': String(r.id === role), class: r.id === role ? 'on' : '', title: r.blurb, onclick: () => ((role = r.id), paintRole()) }, `${r.emoji} ${r.label}`),
+      ),
+    );
+    roleBlurb.textContent = ROLE_BY_ID.get(role)!.blurb;
+    if (!opts.placeholder) ta.placeholder = role === 'coder' ? 'What should the worker work on?' : 'What can they help you with?';
+    wtRow?.classList.toggle('hidden', role !== 'coder');
+  };
+  const roleRow = opts.roleOption ? h('div', { style: 'margin:0 0 10px' }, h('label', { style: 'display:block;font-weight:800;margin:0 0 6px' }, 'Hire as'), roleChips, roleBlurb) : null;
   const submit = h('button.btn.primary', { type: 'submit' }, opts.submitLabel ?? 'Send ✨');
   const cancel = h('button.btn', { type: 'button' }, 'Cancel');
   const form = h(
     'form.modal',
     { role: 'dialog', 'aria-label': opts.title },
     h('header', {}, h('h2', {}, opts.title)),
-    h('div.body', {}, opts.warning ? h('p.setting-note.bad', { style: 'margin:0 0 10px', role: 'alert' }, opts.warning) : null, opts.subtitle ? h('p', { style: 'margin:0 0 10px;font-weight:700;color:var(--muted)' }, opts.subtitle) : null, ta, provider?.element ?? null, wtRow),
+    h('div.body', {}, opts.warning ? h('p.setting-note.bad', { style: 'margin:0 0 10px', role: 'alert' }, opts.warning) : null, opts.subtitle ? h('p', { style: 'margin:0 0 10px;font-weight:700;color:var(--muted)' }, opts.subtitle) : null, roleRow, ta, provider?.element ?? null, wtRow),
     h('footer', {}, h('span.grow', {}, 'Enter to send · Shift+Enter for a new line'), cancel, submit),
   ) as HTMLFormElement;
   form.noValidate = true;
+  if (roleRow) paintRole();
 
   const modal = openModal(form);
   cancel.addEventListener('click', () => modal.close());
@@ -72,7 +91,7 @@ export function openPrompt(opts: PromptOptions) {
         // storage blocked
       }
     }
-    opts.onSubmit(text, { worktree: !!opts.worktreeOption && wtBox.checked, provider: provider?.value(), model: provider?.model(), effort: provider?.effort() });
+    opts.onSubmit(text, { worktree: !!opts.worktreeOption && wtBox.checked && (!roleRow || role === 'coder'), provider: provider?.value(), model: provider?.model(), effort: provider?.effort(), role: roleRow ? role : undefined });
   };
   form.addEventListener('submit', (e) => {
     e.preventDefault();

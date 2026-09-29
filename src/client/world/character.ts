@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { HAIR_COLORS, HAIR_STYLES, SKIN_TONES, type Look } from '../../shared/avatar';
+import { HAIR_COLORS, HAIR_STYLES, HATS, PANTS_COLORS, SKIN_TONES, type Look } from '../../shared/avatar';
 import { EMOTE_BY_ID, type Emote, type EmoteId } from '../../shared/emotes';
 import type { CarriedIssue, Theme, WorkerAction, WorkerStatus, WorkerTask } from '../../shared/protocol';
 import type { Drink } from '../../shared/rooftop';
@@ -9,6 +9,7 @@ import { OpenBook } from './book';
 import { HeldCard } from './card';
 import { UNDEAD_SKIN, elfBoot, elfHat, elfWorker, santaHat, warlockHat, zombieWorker } from './costumes';
 import { cardSprite, disposeSprite, mesh, textSprite, toon, toonUnique } from './toon';
+import { CROWN_HATS, TALL_HAIR, buildBeard, buildEyes, buildGlasses, buildHat } from './wardrobe';
 
 export type Pose = 'stand' | 'walk' | 'sit' | 'type';
 
@@ -301,6 +302,10 @@ export class Person {
   private skin: THREE.MeshToonMaterial;
   private hairMat: THREE.MeshToonMaterial;
   private hair = new THREE.Group();
+  private pants: THREE.MeshToonMaterial;
+  /** The eyes, glasses, beard and hat picked on the character screen (see wardrobe.ts). */
+  private face = new THREE.Group();
+  private hatGroup = new THREE.Group();
   private look: Look;
   private label: THREE.Sprite | null = null;
   /** The smaller line under the name tag: what they have open, or where they are (see whereabouts). */
@@ -376,7 +381,7 @@ export class Person {
     const skin = (this.skin = toonUnique(SKIN_TONES[look.skin]));
     this.hairMat = toonUnique(HAIR_COLORS[look.hair]);
     this.hairMat.side = THREE.DoubleSide;
-    const pants = toon('#3d405b');
+    const pants = (this.pants = toonUnique(PANTS_COLORS[look.pants] ?? PANTS_COLORS[0]));
     const ink = toon('#1d1d1d');
 
     this.root.add(this.body);
@@ -387,11 +392,11 @@ export class Person {
     head.position.y = 1.32;
     head.add(mesh(new THREE.SphereGeometry(0.34, 20, 16), skin));
     head.add(this.hair);
+    head.add(this.face);
+    head.add(this.hatGroup);
     this.buildHair();
-    for (const sx of [-1, 1]) {
-      head.add(mesh(new THREE.SphereGeometry(0.055, 10, 8), ink, sx * 0.12, 0.02, 0.3, false));
-      head.add(mesh(new THREE.SphereGeometry(0.05, 10, 8), toon('#ff9f9f'), sx * 0.2, -0.08, 0.27, false));
-    }
+    this.buildFace();
+    for (const sx of [-1, 1]) head.add(mesh(new THREE.SphereGeometry(0.05, 10, 8), toon('#ff9f9f'), sx * 0.2, -0.08, 0.27, false));
     const smile = (this.smile = mesh(new THREE.TorusGeometry(0.06, 0.015, 6, 12, Math.PI), ink, 0, -0.08, 0.32, false));
     smile.rotation.z = Math.PI;
     head.add(smile);
@@ -473,10 +478,25 @@ export class Person {
 
   setLook(look: Look) {
     const restyle = look.style !== this.look.style;
+    const refit = look.eyes !== this.look.eyes || look.glasses !== this.look.glasses || look.beard !== this.look.beard || look.hat !== this.look.hat || look.hatColor !== this.look.hatColor;
     this.look = { ...look };
     this.hairMat.color.set(HAIR_COLORS[look.hair]);
+    this.pants.color.set(PANTS_COLORS[look.pants] ?? PANTS_COLORS[0]);
     if (restyle) this.buildHair();
+    if (refit) this.buildFace();
     this.dress();
+  }
+
+  /** The eyes, glasses, beard and hat (see wardrobe.ts). */
+  private buildFace() {
+    undress([...this.face.children, ...this.hatGroup.children]);
+    this.face.add(buildEyes(this.look));
+    const glasses = buildGlasses(this.look);
+    if (glasses) this.face.add(glasses);
+    const beard = buildBeard(this.look, this.hairMat);
+    if (beard) this.face.add(beard);
+    const hat = buildHat(this.look);
+    if (hat) this.hatGroup.add(hat);
   }
 
   /** Dresses up for a holiday: a crooked warlock's hat and undead skin for Halloween, a Santa hat for Christmas. Null takes it off. */
@@ -498,7 +518,10 @@ export class Person {
     this.skin.color.set(SKIN_TONES[this.look.skin]);
     if (this.costume === 'halloween') this.skin.color.lerp(UNDEAD_SKIN, 0.7);
     const style = HAIR_STYLES[this.look.style];
-    this.hair.visible = !this.costume || !(style === 'Spiky' || style === 'Bun' || style === 'Curly');
+    // A holiday hat goes on in place of their own; tall hair hides under either.
+    this.hatGroup.visible = !this.costume;
+    const covered = !!this.costume || CROWN_HATS.has(HATS[this.look.hat]);
+    this.hair.visible = !covered || !TALL_HAIR.has(style);
   }
 
   /** Hair is a set of shapes on the head (whose center is 0,0,0; the face looks down +z). */
@@ -565,6 +588,47 @@ export class Person {
         break;
       }
       case 'Bald':
+        break;
+      case 'Buzz':
+        add(new THREE.SphereGeometry(0.345, 20, 12, 0, Math.PI * 2, 0, Math.PI * 0.42), 0, 0.01, -0.02, -0.25);
+        break;
+      case 'Mohawk': {
+        // A crest of spikes front to back over the middle of the head.
+        for (let i = 0; i < 7; i++) {
+          const a = -0.55 + (i / 6) * 2.1;
+          const spike = add(new THREE.ConeGeometry(0.075, 0.26, 8), 0, Math.cos(a) * 0.38, Math.sin(a) * 0.38 * -1 + 0.02);
+          spike.rotation.x = -a;
+          spike.scale.x = 0.55;
+        }
+        break;
+      }
+      case 'Afro': {
+        // Like curly hair, but a much bigger cloud of bigger puffs, still leaving the face clear.
+        const n = 60;
+        for (let i = 0; i < n; i++) {
+          const y = 1 - (i / (n - 1)) * 2;
+          const r = Math.sqrt(1 - y * y);
+          const th = i * 2.39996;
+          const px = Math.cos(th) * r;
+          const pz = Math.sin(th) * r;
+          if (y < -0.3 || (pz > 0.25 && y < 0.45)) continue;
+          add(new THREE.SphereGeometry(0.17, 10, 8), px * 0.42, y * 0.4 + 0.12, pz * 0.42 - 0.07);
+        }
+        break;
+      }
+      case 'Bob': {
+        cap();
+        const back = add(new THREE.SphereGeometry(0.385, 20, 14, Math.PI * 0.88, Math.PI * 1.24, Math.PI * 0.28, Math.PI * 0.36), 0, -0.02, -0.02);
+        back.scale.set(1.05, 1.1, 1);
+        break;
+      }
+      case 'Pigtails':
+        cap();
+        for (const sx of [-1, 1]) {
+          add(new THREE.SphereGeometry(0.07, 10, 8), sx * 0.3, 0.12, -0.16);
+          const tail = add(new THREE.CapsuleGeometry(0.075, 0.24, 6, 10), sx * 0.38, -0.08, -0.18, 0, sx * 0.35);
+          tail.scale.set(1, 1, 0.85);
+        }
         break;
     }
     this.hair.traverse((o) => ((o as THREE.Mesh).castShadow = true));

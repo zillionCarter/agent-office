@@ -83,3 +83,47 @@ test('the floor the office was started in comes off too, stays off after a resta
   assert.equal(third.ensureLocal(defs[0].dir, 'the office')?.id, 'api');
   assert.deepEqual(third.list().map((d) => d.id), ['web', 'docs', 'api']);
 });
+
+test('any folder can be a floor as it is, and an assistant floor gets its brief', (t) => {
+  const { root, dataDir } = office(t);
+  const building = new Building(dataDir, root);
+  const notes = path.join(root, 'elsewhere', 'notes');
+  mkdirSync(path.join(notes, 'recipes'), { recursive: true });
+
+  const added = building.addFolder(notes, 'Sam');
+  assert.equal(typeof added, 'object');
+  assert.equal((added as FloorDef).name, 'notes');
+  assert.equal((added as FloorDef).repo, undefined, 'not a checkout, so no repository');
+  assert.deepEqual(saved(dataDir), ['api', 'web', 'docs', 'notes']);
+
+  // Twice, inside another floor, holding one, missing, or the whole home folder: no.
+  assert.match(building.addFolder(notes, 'Sam') as string, /already the notes floor/);
+  assert.match(building.addFolder(path.join(notes, 'recipes'), 'Sam') as string, /inside the notes floor/);
+  assert.match(building.addFolder(path.join(root, 'acme'), 'Sam') as string, /holds the api floor/);
+  assert.match(building.addFolder(path.join(root, 'nowhere'), 'Sam') as string, /no folder at/);
+  assert.match(building.addFolder('~', 'Sam') as string, /too big/);
+  assert.match(building.addFolder('relative/path', 'Sam') as string, /full path/);
+
+  // An assistant's floor is made if it isn't there, with ABOUT-ME.md and notes/, and says what it is after a restart.
+  const home = path.join(root, 'assistant');
+  const assistant = building.addFolder(home, 'Sam', { create: true, kind: 'assistant', name: 'Helper' });
+  assert.equal(typeof assistant, 'object');
+  assert.equal((assistant as FloorDef).name, 'Helper');
+  assert.ok(existsSync(path.join(home, 'ABOUT-ME.md')));
+  assert.ok(existsSync(path.join(home, 'notes', 'README.md')));
+  assert.equal(new Building(dataDir, root).list().find((d) => d.dir === home)?.kind, 'assistant');
+});
+
+test('browsing lists a folder’s folders, hidden ones left out, and says which is a floor', (t) => {
+  const { root, dataDir, defs } = office(t);
+  const building = new Building(dataDir, root);
+  mkdirSync(path.join(root, 'acme', '.secret'));
+  writeFileSync(path.join(root, 'acme', 'file.txt'), 'x');
+
+  const listing = building.browse(path.join(root, 'acme'));
+  assert.deepEqual(listing.folders, ['api', 'docs', 'web']);
+  assert.equal(listing.floor, undefined);
+  assert.equal(building.browse(defs[0].dir).floor, 'api');
+  assert.match(building.browse(path.join(root, 'missing')).error!, /no folder/);
+  assert.match(building.browse('nope').error!, /full path/);
+});
