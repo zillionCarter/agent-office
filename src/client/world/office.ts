@@ -1276,11 +1276,9 @@ export function buildOffice(): Office {
   colliders.push(...hoop.colliders);
   fixture('west', HOOP.z, (HOOP.board.bottom - 0.6 + HOOP.board.top + 0.1) / 2, HOOP.board.width + 0.2, HOOP.board.top - HOOP.board.bottom + 0.7);
 
-  // The whiteboard, out on the floor between the desks and the lounge.
+  // The rolling whiteboard is kept off the floor: its drawing opens from the ☰ menu instead. It's
+  // still built, unplaced, so the drawing has somewhere to be mirrored to.
   const whiteboard = buildWhiteboard();
-  group.add(whiteboard.group);
-  colliders.push(...whiteboard.colliders);
-  interactables.push(whiteboard.interactable);
   // Pictures stay clear of the stairs (step by step, so they can hang above them) and of what's on
   // the loft's walls upstairs, as buildLoft places it: the couch and the sign.
   const run = (STAIRS.toX - STAIRS.fromX) / STAIRS.steps;
