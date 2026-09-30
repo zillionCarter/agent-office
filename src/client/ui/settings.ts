@@ -4,6 +4,7 @@ import { askNotifyPermission, notifyPermission, type DesktopNotifier } from '../
 import type { ThemePick, WebhookKind } from '../../shared/protocol';
 import { THEME_PICKS } from '../../shared/theme';
 import { DOG_NAME_MAX, cleanDogName } from '../../shared/dog';
+import { QUALITIES } from '../world/graphics';
 import { h, openModal, timeAgo } from './dom';
 import { agentFields, choiceLabel, officeChoice } from './provider';
 import { openPromptEditor, rewrittenPrompts } from './prompts';
@@ -110,6 +111,34 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
   };
   paintTalk();
   const musicRow = volumeRow('Jukebox volume', 'music', 'musicMuted');
+
+  // How good the office looks: each browser's own choice.
+  const gfxRow = h('div.seg', { role: 'radiogroup', 'aria-label': 'Graphics' });
+  const gfxNote = h('p.setting-note');
+  const paintGfx = () => {
+    gfxRow.replaceChildren(
+      ...QUALITIES.map((q) =>
+        h(
+          'button.btn',
+          {
+            type: 'button',
+            role: 'radio',
+            'aria-checked': String(settings.graphics === q.id),
+            class: settings.graphics === q.id ? 'on' : '',
+            onclick: () => {
+              if (settings.graphics === q.id) return;
+              settings = { ...settings, graphics: q.id };
+              onChange(settings);
+              paintGfx();
+            },
+          },
+          q.label,
+        ),
+      ),
+    );
+    gfxNote.textContent = `${QUALITIES.find((q) => q.id === settings.graphics)?.about ?? ''}. Just for you, in this browser: lower it if the office gets choppy.`;
+  };
+  paintGfx();
 
   // The building's holiday theme, for everyone.
   const themeRow = h('div.seg', { role: 'radiogroup', 'aria-label': 'Holiday theme' });
@@ -420,6 +449,9 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
       h('label', {}, 'Camera view'),
       seg,
       note,
+      h('label', { style: 'margin-top:18px' }, '✨ Graphics'),
+      gfxRow,
+      gfxNote,
       h('label', { style: 'margin-top:18px' }, 'Office sounds'),
       soundRow,
       h('p.setting-note', {}, 'Workers typing, footsteps, the coffee machine, birds and rain outside, the dog, and the ding when a worker is done. Voice chat isn’t affected.'),

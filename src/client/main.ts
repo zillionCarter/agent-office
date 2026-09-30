@@ -62,6 +62,7 @@ import { hiringPaused, renderUsage, usageLabel, usageTitle } from './ui/usage';
 import { elevatorPanelOpen, openElevator, routeElevatorMessage } from './ui/elevator';
 import { openMail, routeMailMessage } from './ui/mail';
 import { BuildMode } from './ui/build';
+import { Graphics } from './world/graphics';
 import { openLibrary } from './ui/assets';
 import { ScreenLayer } from './world/screens';
 import { openBrowser } from './ui/browser';
@@ -116,6 +117,8 @@ sun.shadow.mapSize.set(2048, 2048);
 Object.assign(sun.shadow.camera, { left: -32, right: 32, top: 30, bottom: -30, near: 1, far: 100 });
 sun.shadow.bias = -0.0008;
 sun.shadow.normalBias = 0.03;
+// How good it all looks, as picked in ⚙️ Settings (see world/graphics.ts).
+const graphics = new Graphics(renderer, effect, scene, camera, sun);
 scene.add(sun);
 
 const office = buildOffice();
@@ -299,6 +302,7 @@ me.showLabel(false);
 scene.add(me.root);
 noOutline(me.root);
 const settings = loadSettings();
+graphics.set(settings.graphics);
 const player = new PlayerController(camera, canvas, office.colliders);
 /** Where you aim in first person: the middle of the screen. */
 const BUILD_CENTER = new THREE.Vector2(0, 0);
@@ -3309,6 +3313,7 @@ function showSettings() {
         hud.refresh();
       }
       player.setView(settings.view);
+      graphics.set(settings.graphics);
       sound.setVolume(settings.volume, settings.muted);
       sound.setMusicVolume(settings.music, settings.musicMuted);
     },
@@ -3540,7 +3545,7 @@ function frame(ts?: number) {
   else if (drunkVisionOn) drunkVision.release();
   drunkVisionOn = blurry;
   if (build.active) build.update(player.view === 'first' ? BUILD_CENTER : pointer, camera);
-  effect.render(scene, camera);
+  graphics.render(blurry);
   if (!upTop) screens.render(camera, canvas, [office.group]);
   pointToWaiting(now);
   // Not while the camera's up at the boss's monitor or the arcade, where they'd cover the screen.

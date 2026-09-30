@@ -4,6 +4,7 @@ import { randomLook, sanitizeLook, type Look } from '../shared/avatar';
 import type { Decoration } from '../shared/decor';
 import type { FurnitureState } from '../shared/furniture';
 import type { AssetInfo } from '../shared/assets';
+import type { Quality } from './world/graphics';
 import { newer, type WbElement } from '../shared/whiteboard';
 import type { DogState } from '../shared/dog';
 import { JUKEBOX_TUNES, type JukeboxState } from '../shared/jukebox';
@@ -67,6 +68,8 @@ export interface Settings {
   hud: Record<HudPanel, boolean>;
   /** The ☰ menu's actions you pinned to the top bar, by id. */
   pins: string[];
+  /** How good the office looks, against how hard it works the machine (see world/graphics.ts). */
+  graphics: Quality;
 }
 
 const SETTINGS_KEY = 'agent-office.settings';
@@ -90,7 +93,7 @@ function rememberFloor(id: string | null) {
 }
 
 export function loadSettings(): Settings {
-  const s: Settings = { view: 'first', volume: 0.7, muted: false, music: 0.5, musicMuted: false, pushToTalk: false, notify: true, hud: { ...HUD_DEFAULTS }, pins: [] };
+  const s: Settings = { view: 'first', volume: 0.7, muted: false, music: 0.5, musicMuted: false, pushToTalk: false, notify: true, hud: { ...HUD_DEFAULTS }, pins: [], graphics: 'standard' };
   try {
     const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? 'null');
     if (saved?.view === 'first' || saved?.view === 'third') s.view = saved.view;
@@ -101,6 +104,7 @@ export function loadSettings(): Settings {
     if (typeof saved?.pushToTalk === 'boolean') s.pushToTalk = saved.pushToTalk;
     if (typeof saved?.notify === 'boolean') s.notify = saved.notify;
     for (const k of Object.keys(s.hud) as HudPanel[]) if (typeof saved?.hud?.[k] === 'boolean') s.hud[k] = saved.hud[k];
+    if (saved?.graphics === 'high' || saved?.graphics === 'ultra' || saved?.graphics === 'standard') s.graphics = saved.graphics;
     if (Array.isArray(saved?.pins)) s.pins = saved.pins.filter((p: unknown): p is string => typeof p === 'string').slice(0, 30);
   } catch {
     // storage blocked
