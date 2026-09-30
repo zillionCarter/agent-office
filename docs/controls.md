@@ -23,7 +23,7 @@ Back to the [README](../README.md).
 | V | Join voice; in voice, hold to talk (you're muted when you let go) |
 | L | At a worker's desk: move it to the reception desk, or (Claude Code workers) to another floor, conversation and all |
 | U | At a worker's desk: rename it, repaint it, dress it, give it standing instructions |
-| K | Build mode: add walls, offices and furniture, move the desks (K or Esc again to stop) |
+| K | Build mode: I opens the catalog, click puts down what you hold (the wheel turns it), click something to change it (G move, X remove); K again to stop |
 | M | Mute / unmute in voice |
 | Tab | The ☰ menu: every window, and what shows on screen |
 | Esc | Close any window (a terminal too) and get back to looking around |

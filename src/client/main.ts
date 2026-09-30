@@ -297,6 +297,8 @@ scene.add(me.root);
 noOutline(me.root);
 const settings = loadSettings();
 const player = new PlayerController(camera, canvas, office.colliders);
+/** Where you aim in first person: the middle of the screen. */
+const BUILD_CENTER = new THREE.Vector2(0, 0);
 // What's been added to the floor in build mode, and its moved desks (see world/furniture.ts).
 const furniture = new FurnitureView(office.colliders, office);
 office.group.add(furniture.group);
@@ -309,10 +311,14 @@ const build = new BuildMode({
   scene,
   office,
   furniture,
+  // The catalog needs the mouse: the player lets go of it while it's open.
+  setCatalog: (open) => {
+    player.enabled = !open && !modalOpen();
+    if (!open && player.view === 'first' && player.canLock) player.lock();
+  },
   onToggle: (on) => {
-    player.enabled = !on && !modalOpen();
     document.body.classList.toggle('building', on);
-    if (on) toast('🛠️ Build mode: pick something on the left and click to put it down, or click something to change it', 'info');
+    if (on) toast('🛠️ Build mode: press I for the catalog, or look at something and click to change it. K to stop.', 'info');
   },
 });
 // Everyone arrives by elevator (the welcome says exactly where).
@@ -3011,6 +3017,7 @@ canvas.addEventListener('pointerleave', () => (pointer = null));
 player.onClick = (ndc) => {
   // At the tee, a click is you steadying the mouse to aim: nothing else is in reach.
   if (modalOpen() || golf.active) return;
+  if (build.active) return build.click();
   if (emoteWheel.isOpen) return emoteWheel.click();
   // The ball in your hands: press to wind up, let go (or click again, with no mouse captured) to shoot.
   if (holdingBall()) {
@@ -3457,11 +3464,11 @@ function frame(ts?: number) {
   if (blurry) drunkVision.begin();
   else if (drunkVisionOn) drunkVision.release();
   drunkVisionOn = blurry;
-  if (build.active) build.frame();
-  effect.render(scene, build.active ? build.camera : camera);
+  if (build.active) build.update(player.view === 'first' ? BUILD_CENTER : pointer, camera);
+  effect.render(scene, camera);
   pointToWaiting(now);
   // Not while the camera's up at the boss's monitor or the arcade, where they'd cover the screen.
-  if (firstPerson && !arcade.zoomed && !cabinet.zoomed && !golf.active && !build.active) {
+  if (firstPerson && !arcade.zoomed && !cabinet.zoomed && !golf.active) {
     // Hands go on top of everything, so they never clip into a desk you walk up to. They have
     // lights of their own, turned down to match wherever you're standing.
     renderer.clearDepth();
