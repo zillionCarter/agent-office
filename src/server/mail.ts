@@ -11,14 +11,18 @@ import type { MailInfo } from '../shared/protocol.js';
 // the sender through to a coworker with `office-queue mail transfer`.
 //
 // mail.json in the office's .agent-office folder sets it up:
-//   { "floor": "home-base", "from": "Front desk <desk@example.com>", "allow": ["me@example.com"], "resendKey": "re_…" }
+//   { "floor": "home-base", "domain": "mail.example.com", "desk": "admino", "allow": ["me@example.com"], "resendKey": "re_…" }
+// The front desk is <desk>@<domain>, and every worker has an address of its own, its name at the same
+// domain (Byte is byte@…): email to it goes straight to that worker, and its replies come from it.
 // Mail from anyone not on `allow` is dropped. The token the relay needs is in mail-token beside it.
 
 export interface MailConfig {
   /** The floor whose reception gets the mail. */
   floor: string;
-  /** The address replies go out from (one Resend can send from). */
-  from: string;
+  /** The domain every address is at: one Resend receives and sends for. */
+  domain: string;
+  /** The front desk's address (before the @), and the name its replies come from. */
+  desk: string;
   /** Who may write in; everyone else is dropped. Lower-cased. */
   allow: string[];
   resendKey: string;
@@ -36,9 +40,13 @@ const THREAD_MS = 14 * 24 * 3600_000;
 
 export function loadMailConfig(dataDir: string): MailConfig | undefined {
   try {
-    const raw = JSON.parse(readFileSync(path.join(dataDir, 'mail.json'), 'utf8')) as Partial<MailConfig>;
-    if (typeof raw.floor !== 'string' || typeof raw.from !== 'string' || typeof raw.resendKey !== 'string' || !Array.isArray(raw.allow)) return undefined;
-    return { floor: raw.floor, from: raw.from, resendKey: raw.resendKey, allow: raw.allow.filter((a): a is string => typeof a === 'string').map((a) => a.trim().toLowerCase()) };
+    const raw = JSON.parse(readFileSync(path.join(dataDir, 'mail.json'), 'utf8')) as Partial<MailConfig> & { from?: string };
+    // An older mail.json named one address to send from: its domain, and its name as the desk.
+    const old = typeof raw.from === 'string' ? /([^<\s@]+)@([^>\s]+)/.exec(raw.from) : null;
+    const domain = typeof raw.domain === 'string' && raw.domain ? raw.domain : old?.[2];
+    const desk = mailbox(typeof raw.desk === 'string' && raw.desk ? raw.desk : (old?.[1] ?? 'desk'));
+    if (typeof raw.floor !== 'string' || !domain || !desk || typeof raw.resendKey !== 'string' || !Array.isArray(raw.allow)) return undefined;
+    return { floor: raw.floor, domain: domain.toLowerCase(), desk, resendKey: raw.resendKey, allow: raw.allow.filter((a): a is string => typeof a === 'string').map((a) => a.trim().toLowerCase()) };
   } catch {
     return undefined;
   }
@@ -62,6 +70,33 @@ export function sameToken(a: string, b: string): boolean {
   const x = Buffer.from(a);
   const y = Buffer.from(b);
   return x.length === y.length && timingSafeEqual(x, y);
+}
+
+/** A name as the part of an address before the @: Penny Lane is penny.lane. */
+export function mailbox(name: string): string {
+  return name
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '.')
+    .replace(/^\.+|\.+$/g, '')
+    .slice(0, 48);
+}
+
+/** Who a reply is from: the front desk's name and address for whoever's at reception, else the worker's own. */
+export function senderFor(cfg: MailConfig, name: string, atDesk: boolean): string {
+  const display = atDesk ? cfg.desk.charAt(0).toUpperCase() + cfg.desk.slice(1) : name.replace(/[<>"]/g, '');
+  return `${display} <${atDesk ? cfg.desk : mailbox(name) || cfg.desk}@${cfg.domain}>`;
+}
+
+/** The addresses among `to` at the office's domain, as their names before the @. */
+export function officeRecipients(cfg: MailConfig, to: string[]): string[] {
+  const out: string[] = [];
+  for (const t of to) {
+    const m = /([^<\s@"]+)@([^>\s"]+)/.exec(t);
+    if (m && m[2].toLowerCase() === cfg.domain) out.push(m[1].toLowerCase());
+  }
+  return out;
 }
 
 /** The subject without its Re:/Fwd: prefixes, for telling which thread an email is in. */
@@ -133,8 +168,8 @@ export class Mailbox {
   }
 }
 
-/** Sends `text` back to whoever sent `mail`, in its thread. Resolves to an error, if any. */
-export async function sendReply(cfg: MailConfig, mail: Mail, text: string, fetchImpl: typeof fetch = fetch): Promise<string | undefined> {
+/** Sends `text` back to whoever sent `mail`, in its thread, from `from` (see senderFor). Resolves to an error, if any. */
+export async function sendReply(cfg: MailConfig, mail: Mail, text: string, from: string, fetchImpl: typeof fetch = fetch): Promise<string | undefined> {
   const subject = /^\s*re\s*:/i.test(mail.subject) ? mail.subject : `Re: ${mail.subject}`;
   const headers: Record<string, string> = {};
   if (mail.messageId) {
@@ -145,7 +180,7 @@ export async function sendReply(cfg: MailConfig, mail: Mail, text: string, fetch
     const res = await fetchImpl('https://api.resend.com/emails', {
       method: 'POST',
       headers: { authorization: `Bearer ${cfg.resendKey}`, 'content-type': 'application/json', 'user-agent': 'agent-office' },
-      body: JSON.stringify({ from: cfg.from, to: [mail.from], subject, text, ...(Object.keys(headers).length ? { headers } : {}) }),
+      body: JSON.stringify({ from, to: [mail.from], subject, text, ...(Object.keys(headers).length ? { headers } : {}) }),
       signal: AbortSignal.timeout(20_000),
     });
     if (res.ok) return undefined;
@@ -157,7 +192,7 @@ export async function sendReply(cfg: MailConfig, mail: Mail, text: string, fetch
 }
 
 /** What whoever gets an email is told: the email, and how to answer it or pass it on. */
-export function mailPrompt(mail: Mail, tool: string, transfer?: { by: string; note?: string }): string {
+export function mailPrompt(mail: Mail, tool: string, transfer?: { by: string; note?: string }, sender?: string): string {
   const lines = [
     transfer ? `📧 ${transfer.by} put an email through to you (#${mail.id}).${transfer.note ? ` Their note: ${transfer.note}` : ''}` : `📧 New email #${mail.id}`,
     `From: ${mail.from}`,
@@ -166,7 +201,7 @@ export function mailPrompt(mail: Mail, tool: string, transfer?: { by: string; no
     mail.text.trim() || '(no text)',
     '',
     '---',
-    `Answer it by email (it goes back to ${mail.from} only, in the same thread; no need to ask first, this is what the email is for):`,
+    `Answer it by email (it goes back to ${mail.from} only, in the same thread${sender ? `, from ${sender}` : ''}; no need to ask first, this is what the email is for):`,
     `  ${tool} mail reply ${mail.id} <<'EOF'`,
     '  …your reply…',
     '  EOF',

@@ -41,7 +41,7 @@ import { MAX_FLOORS } from '../shared/floors.js';
 import { LOOK_KEYS, lookFromSeed, sanitizeLook } from '../shared/avatar.js';
 import { ROLE_BY_ID, isWorkerRole } from '../shared/roles.js';
 import { copyClaudeSession, listCowork } from './sessions.js';
-import { loadMailConfig, mailPrompt, mailToken, sameToken, sendReply, type Mail } from './mail.js';
+import { loadMailConfig, mailPrompt, mailToken, mailbox, officeRecipients, sameToken, sendReply, senderFor, type Mail } from './mail.js';
 import { EMOTE_EVERY, EmoteBucket, isEmote } from '../shared/emotes.js';
 import { isThemePick } from '../shared/theme.js';
 import { PROMPTS, PROMPT_MAX, isPromptId } from '../shared/prompts.js';
@@ -361,7 +361,8 @@ export async function startServer(cfg: Config) {
     if (!target) return 'Nobody is at reception to answer it';
     if (target.kind !== 'agent') return `${target.name} is a shell, not an agent`;
     const tool = path.join(floor.dir, '.agent-office', 'bin', 'office-queue');
-    const text = mailPrompt(mail, target.deskId === RECEPTION.id ? 'office-queue' : tool, transfer);
+    const mailCfg = loadMailConfig(cfg.dataDir);
+    const text = mailPrompt(mail, target.deskId === RECEPTION.id ? 'office-queue' : tool, transfer, mailCfg ? senderFor(mailCfg, target.name, target.deskId === RECEPTION.id) : undefined);
     const running = !isAsleep(target.status) && target.status !== 'starting';
     const err = running ? floor.workers.prompt(target.id, text, 'email') : floor.workers.resume(target.id, text);
     if (err) return err;
@@ -374,18 +375,33 @@ export async function startServer(cfg: Config) {
     if (!sameToken(auth, token)) return send(res, 401, { error: `Send the token in ${path.join(cfg.dataDir, 'mail-token')} as the bearer token` });
     const mailCfg = loadMailConfig(cfg.dataDir);
     if (!mailCfg) return send(res, 503, { error: `Email isn't set up: ${path.join(cfg.dataDir, 'mail.json')} is missing or incomplete` });
-    let body: { from?: unknown; subject?: unknown; text?: unknown; messageId?: unknown };
+    let body: { from?: unknown; to?: unknown; subject?: unknown; text?: unknown; messageId?: unknown };
     try {
       body = JSON.parse(await readBody(req));
     } catch {
-      return send(res, 400, { error: 'Send JSON: {"from", "subject", "text", "messageId"}' });
+      return send(res, 400, { error: 'Send JSON: {"from", "to", "subject", "text", "messageId"}' });
     }
     const from = str(body.from, 320).trim();
     if (!from || !mailCfg.allow.includes(from.toLowerCase())) return send(res, 200, { ignored: 'not on the allow list' });
-    const floor = floors.get(mailCfg.floor);
+    // Written to a worker by name (byte@…): straight to it, on whichever floor it's on. Else the front desk's floor.
+    const to = officeRecipients(mailCfg, Array.isArray(body.to) ? body.to.map((t) => str(t, 320)) : [str(body.to, 320)]);
+    let direct: { floor: Floor; id: string } | undefined;
+    for (const name of to) {
+      if (name === mailCfg.desk) continue;
+      const all = [floors.get(mailCfg.floor), ...floors.values()].filter((f): f is Floor => !!f);
+      for (const f of all) {
+        const w = f.workers.list().find((x) => x.kind === 'agent' && mailbox(x.name) === name);
+        if (w) {
+          direct = { floor: f, id: w.id };
+          break;
+        }
+      }
+      if (direct) break;
+    }
+    const floor = direct?.floor ?? floors.get(mailCfg.floor);
     if (!floor) return send(res, 503, { error: `There's no ${mailCfg.floor} floor for the mail to go to` });
     const { mail, thread } = floor.mailbox.add({ from, subject: str(body.subject, 300), text: str(body.text, 20000), messageId: str(body.messageId, 500) || undefined });
-    const got = deliverMail(floor, mail, thread);
+    const got = deliverMail(floor, mail, direct?.id ?? (to.includes(mailCfg.desk) ? undefined : thread));
     console.log(`  📧 email from ${from}: “${mail.subject}” → ${typeof got === 'string' ? `nobody (${got})` : got.name}`);
     toastFloor(floor, typeof got === 'string' ? `📧 Email from ${from}: “${mail.subject}” — ${got.toLowerCase()}` : `📧 Email from ${from} for ${got.name}: “${mail.subject}”`, typeof got === 'string' ? 'warn' : 'info');
     emitMail(floor);
@@ -417,7 +433,7 @@ export async function startServer(cfg: Config) {
       if (!mailCfg) return send(res, 503, { error: "Email isn't set up on this office" });
       const text = str(body.text, 20000).trim();
       if (!text) return send(res, 400, { error: 'The reply is empty' });
-      const error = await sendReply(mailCfg, mail, text);
+      const error = await sendReply(mailCfg, mail, text, senderFor(mailCfg, agent.name, front));
       floor.mailbox.noteReply(mail, { by: agent.name, at: Date.now(), text, error });
       emitMail(floor);
       if (error) return send(res, 502, { error });

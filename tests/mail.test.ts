@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { Mailbox, loadMailConfig, mailPrompt, mailToken, sendReply, threadKey } from '../src/server/mail.js';
+import { Mailbox, loadMailConfig, mailPrompt, mailToken, mailbox, officeRecipients, sendReply, senderFor, threadKey } from '../src/server/mail.js';
 import { buildRequest, formatMail, parseArgs } from '../bin/office-queue.js';
 
 function scratch(t: { after(fn: () => void): void }) {
@@ -25,8 +25,12 @@ test('a follow-up in a thread goes back to whoever had it', (t) => {
 test('the config and token are read from the office folder', (t) => {
   const dir = scratch(t);
   assert.equal(loadMailConfig(dir), undefined);
-  writeFileSync(path.join(dir, 'mail.json'), JSON.stringify({ floor: 'home-base', from: 'Desk <desk@x.dev>', allow: ['Me@X.dev'], resendKey: 're_1' }));
-  assert.deepEqual(loadMailConfig(dir)?.allow, ['me@x.dev']);
+  writeFileSync(path.join(dir, 'mail.json'), JSON.stringify({ floor: 'home-base', from: 'Desk <homebase@Agent.X.dev>', allow: ['Me@X.dev'], resendKey: 're_1' }));
+  const old = loadMailConfig(dir)!;
+  assert.deepEqual(old.allow, ['me@x.dev']);
+  assert.deepEqual([old.domain, old.desk], ['agent.x.dev', 'homebase'], 'an older mail.json still works');
+  writeFileSync(path.join(dir, 'mail.json'), JSON.stringify({ floor: 'home-base', domain: 'agent.x.dev', desk: 'Admino', allow: [], resendKey: 're_1' }));
+  assert.equal(loadMailConfig(dir)!.desk, 'admino');
   const token = mailToken(dir);
   assert.ok(token.length >= 32);
   assert.equal(mailToken(dir), token, 'made once, then kept');
@@ -40,15 +44,16 @@ test('a reply goes to the sender only, in its thread', async (t) => {
     sent = { url, init };
     return new Response('{"id":"1"}', { status: 200 });
   }) as unknown as typeof fetch;
-  const err = await sendReply({ floor: 'f', from: 'Desk <desk@x.dev>', allow: [], resendKey: 're_1' }, mail, 'Hi back', fake);
+  const err = await sendReply({ floor: 'f', domain: 'x.dev', desk: 'admino', allow: [], resendKey: 're_1' }, mail, 'Hi back', 'Byte <byte@x.dev>', fake);
   assert.equal(err, undefined);
   assert.equal(sent!.url, 'https://api.resend.com/emails');
   const body = JSON.parse(String(sent!.init.body));
   assert.deepEqual(body.to, ['me@x.dev']);
+  assert.equal(body.from, 'Byte <byte@x.dev>');
   assert.equal(body.subject, 'Re: Hello');
   assert.equal(body.headers['In-Reply-To'], '<abc@x.dev>');
   const refused = (async () => new Response('{"message":"domain not verified"}', { status: 403 })) as unknown as typeof fetch;
-  assert.match((await sendReply({ floor: 'f', from: 'd@x.dev', allow: [], resendKey: 'k' }, mail, 'x', refused))!, /403.*domain not verified/);
+  assert.match((await sendReply({ floor: 'f', domain: 'x.dev', desk: 'admino', allow: [], resendKey: 'k' }, mail, 'x', 'Admino <admino@x.dev>', refused))!, /403.*domain not verified/);
 });
 
 test('whoever gets an email is told how to answer it and pass it on', (t) => {
@@ -71,4 +76,13 @@ test('office-queue mail reply, transfer and list', () => {
   assert.throws(() => parseArgs(['mail', 'transfer', 'ab12cd']), /coworker/);
   assert.throws(() => buildRequest(parseArgs(['mail', 'reply', 'ab12cd']), office, '  '), /empty/);
   assert.match(formatMail({ mails: [{ id: 'ab12cd', at: 0, from: 'me@x.dev', subject: 'Hi', assigneeName: 'Byte', replies: [{ by: 'Byte' }] }] }), /ab12cd .* me@x.dev · Hi · with Byte\n\s+↳ Byte replied/);
+});
+
+test('every worker has an address of its own, and the front desk has its name', () => {
+  const cfg = { floor: 'f', domain: 'agent.x.dev', desk: 'admino', allow: [], resendKey: 'k' };
+  assert.equal(mailbox('Penny Lane'), 'penny.lane');
+  assert.equal(mailbox('Zoë 🐚'), 'zoe');
+  assert.equal(senderFor(cfg, 'Byte', false), 'Byte <byte@agent.x.dev>');
+  assert.equal(senderFor(cfg, 'DaveO', true), 'Admino <admino@agent.x.dev>');
+  assert.deepEqual(officeRecipients(cfg, ['Byte <BYTE@agent.x.dev>', 'someone@else.com', 'admino@agent.x.dev']), ['byte', 'admino']);
 });
