@@ -675,6 +675,19 @@ export interface FolderListing {
   error?: string;
 }
 
+/** An email that came in for a floor's front desk (see server/mail.ts). */
+export interface MailInfo {
+  id: string;
+  from: string;
+  subject: string;
+  text: string;
+  at: number;
+  /** The worker it went to, last: the receptionist, or whoever it was put through to. */
+  assignee?: string;
+  assigneeName?: string;
+  replies: { by: string; at: number; text: string; error?: string }[];
+}
+
 /** A chat from Claude's Cowork mode, for bringing it into the office as a worker. */
 export interface CoworkChatInfo {
   id: string;
@@ -1136,6 +1149,10 @@ export type ClientMsg =
   | { t: 'floor.addFolder'; dir: string; name?: string; create?: boolean; kind?: FloorKind }
   /** The folders in a folder, for picking one; answered with `floor.browse`. */
   | { t: 'floor.browse'; dir: string }
+  /** The email that came in for your floor's front desk; answered with `mail.list`. */
+  | { t: 'mail.list' }
+  /** Put an email through to a worker on your floor, as the receptionist would. */
+  | { t: 'mail.transfer'; mail: string; workerId: string }
   /** Cowork's chats on the office's machine; answered with `cowork.list`. */
   | { t: 'cowork.list' }
   /** Bring a Cowork chat onto your floor as a Claude Code worker carrying on the conversation, at `deskId` or the first free seat. */
@@ -1202,6 +1219,8 @@ export type ServerMsg =
   | { t: 'floor.repos'; repos: RepoChoice[]; error?: string }
   | ({ t: 'floor.browse' } & FolderListing)
   | { t: 'cowork.list'; chats: CoworkChatInfo[]; error?: string }
+  /** `configured`: this floor gets the office's email. */
+  | { t: 'mail.list'; mails: MailInfo[]; configured: boolean }
   /** Sent to whoever asked for the floor, once it's cloned (or couldn't be). */
   | { t: 'floor.added'; repo: string; floor?: string; error?: string }
   /** The projects folder moved (see floor.projectsDir). */

@@ -60,6 +60,7 @@ import { openCharacter } from './ui/character';
 import { openSettings } from './ui/settings';
 import { hiringPaused, renderUsage, usageLabel, usageTitle } from './ui/usage';
 import { elevatorPanelOpen, openElevator, routeElevatorMessage } from './ui/elevator';
+import { openMail, routeMailMessage } from './ui/mail';
 import { cantMove, openCoworkPicker, openMoveFloor, routeCoworkMessage } from './ui/cowork';
 import { toggleFloorMenu } from './ui/floormenu';
 import { providerLabel, officeChoice, resolvedProvider, modelBadge } from './ui/provider';
@@ -607,6 +608,7 @@ net.onMessage((msg) => {
   routePullMessage(msg);
   routeElevatorMessage(msg);
   routeCoworkMessage(msg);
+  routeMailMessage(msg);
   routeWhiteboardMessage(msg, net);
   switch (msg.t) {
     case 'welcome': {
@@ -3097,6 +3099,7 @@ const hud = mountHud(
     { id: 'queue', icon: '📋', label: 'Task queue', section: 'Open', count: () => store.queue.tasks.filter((t) => t.status !== 'done').length, title: () => 'Issues and tasks waiting for a worker', run: showQueue },
     { id: 'services', icon: '🌐', label: 'Services', section: 'Open', count: () => store.services.items.length, title: () => 'Web servers the workers are running', run: () => openServices() },
     { id: 'whiteboard', icon: '📝', label: 'Whiteboard', section: 'Open', title: () => 'Draw together, live', run: () => openWhiteboard(net) },
+    { id: 'mail', icon: '📬', label: 'Front desk mail', section: 'Open', title: () => 'The email that came in for reception, and the replies', run: () => openMail(net) },
     // Up on the top bar while a meeting is on: what's being worked through in the meeting room.
     {
       id: 'meeting',

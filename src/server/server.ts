@@ -29,9 +29,10 @@ import { LeaveOnMerge } from './leave-on-merge.js';
 import { RELAY_LOGIN, relayRequest, relayUpgrade, signInPage, stoppedPage, tunneledPort } from './relay.js';
 import { ChatLog } from './history.js';
 import { Arcade, HighScores } from './cabinet.js';
-import type { ChatLine, ClientMsg, FloorInfo, FloorView, Me, MeetingRequest, PeerInfo, SearchResults, ServerMsg, ServicesState } from '../shared/protocol.js';
+import type { ChatLine, ClientMsg, FloorInfo, FloorView, Me, MeetingRequest, PeerInfo, SearchResults, ServerMsg, ServicesState, WorkerInfo } from '../shared/protocol.js';
+import { isAsleep } from '../shared/status.js';
 import { GH_COMMENT_MAX, GH_LABEL_MAX, isAgentEffort, isAgentProvider } from '../shared/protocol.js';
-import { DESK_BY_ID, elevatorSpot, seatHere, streetBelow } from '../shared/layout.js';
+import { DESK_BY_ID, RECEPTION, elevatorSpot, seatHere, streetBelow } from '../shared/layout.js';
 import { JUKEBOX_TUNES, STREAM } from '../shared/jukebox.js';
 import { checkFrame, scoreText, type CabinetFrame, type CabinetState } from '../shared/cabinet.js';
 import { SEARCH_MAX, SEARCH_MIN, searchKey } from '../shared/search.js';
@@ -40,6 +41,7 @@ import { MAX_FLOORS } from '../shared/floors.js';
 import { LOOK_KEYS, lookFromSeed, sanitizeLook } from '../shared/avatar.js';
 import { ROLE_BY_ID, isWorkerRole } from '../shared/roles.js';
 import { copyClaudeSession, listCowork } from './sessions.js';
+import { loadMailConfig, mailPrompt, mailToken, sameToken, sendReply, type Mail } from './mail.js';
 import { EMOTE_EVERY, EmoteBucket, isEmote } from '../shared/emotes.js';
 import { isThemePick } from '../shared/theme.js';
 import { PROMPTS, PROMPT_MAX, isPromptId } from '../shared/prompts.js';
@@ -87,6 +89,8 @@ interface Client {
   emotes: EmoteBucket;
   /** Has the floor's whiteboard open. */
   whiteboard: boolean;
+  /** Has the mail window open: hears about new email on their floor. */
+  mailOpen?: boolean;
   lastWbPointerAt: number;
   /** At the arcade cabinet on their floor, playing `game` (see Arcade); `frame` is it as it looks now. */
   playing: boolean;
@@ -279,6 +283,8 @@ export async function startServer(cfg: Config) {
       return send(res, 400, {});
     }
     if (url.pathname === '/office/queue') return officeQueue(req, res, url);
+    if (url.pathname === '/office/mail/inbound') return mailInbound(req, res);
+    if (url.pathname === '/office/mail') return officeMail(req, res, url);
     if (req.method !== 'POST' || !['/hooks/claude', '/hooks/opencode', '/hooks/codex'].includes(url.pathname)) return send(res, 404, { ok: false });
     let payload: unknown = {};
     try {
@@ -310,8 +316,7 @@ export async function startServer(cfg: Config) {
     const agent = floor?.workers.authenticate(workerId, token);
     if (!floor || !agent) return send(res, 401, { error: 'Send your own AGENT_OFFICE_WORKER_ID as ?worker= and AGENT_OFFICE_HOOK_TOKEN as the bearer token' });
     const seat = DESK_BY_ID.get(agent.deskId);
-    if (!seat?.station && !seat?.reception) return send(res, 403, { error: 'Only the agents standing by the boards, and whoever is at reception, can use the queue' });
-    // Who's on the floor and what they're doing, for the front desk.
+    // Who's on the floor and what they're doing: anyone may ask (someone put through an email looks up coworkers).
     if (req.method === 'GET' && url.searchParams.get('view') === 'workers') {
       return send(res, 200, {
         workers: floor.workers
@@ -320,6 +325,7 @@ export async function startServer(cfg: Config) {
           .map((w) => ({ name: w.name, desk: DESK_BY_ID.get(w.deskId)?.label ?? w.deskId, kind: w.kind, role: w.role, status: w.status, doing: w.activity, task: w.title, pr: w.pr })),
       });
     }
+    if (!seat?.station && !seat?.reception) return send(res, 403, { error: 'Only the agents standing by the boards, and whoever is at reception, can use the queue' });
     const view = () => {
       const q = floor.queue.state();
       return {
@@ -346,6 +352,95 @@ export async function startServer(cfg: Config) {
     toastFloor(floor, `📋 The ${agent.name} queued ${issue !== undefined ? `issue #${issue}` : `“${task.title}”`}`);
     send(res, 200, { ok: true, task: { id: task.id, title: task.title, status: task.status } });
   };
+  // --- Email for the front desk (see mail.ts) ---------------------------------------------------
+  const token = mailToken(cfg.dataDir);
+  /** Hands `mail` to `targetId`, else whoever had its thread, else whoever's at reception. Returns who got it, or why nobody did. */
+  const deliverMail = (floor: Floor, mail: Mail, targetId?: string, transfer?: { by: string; note?: string }): WorkerInfo | string => {
+    const here = (id?: string) => (id ? floor.workers.get(id) : undefined);
+    const target = here(targetId) ?? floor.workers.list().find((w) => w.deskId === RECEPTION.id);
+    if (!target) return 'Nobody is at reception to answer it';
+    if (target.kind !== 'agent') return `${target.name} is a shell, not an agent`;
+    const tool = path.join(floor.dir, '.agent-office', 'bin', 'office-queue');
+    const text = mailPrompt(mail, target.deskId === RECEPTION.id ? 'office-queue' : tool, transfer);
+    const running = !isAsleep(target.status) && target.status !== 'starting';
+    const err = running ? floor.workers.prompt(target.id, text, 'email') : floor.workers.resume(target.id, text);
+    if (err) return err;
+    floor.mailbox.assign(mail, target.id, target.name);
+    return target;
+  };
+  const mailInbound = async (req: http.IncomingMessage, res: http.ServerResponse) => {
+    if (req.method !== 'POST') return send(res, 405, { error: 'POST' });
+    const auth = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
+    if (!sameToken(auth, token)) return send(res, 401, { error: `Send the token in ${path.join(cfg.dataDir, 'mail-token')} as the bearer token` });
+    const mailCfg = loadMailConfig(cfg.dataDir);
+    if (!mailCfg) return send(res, 503, { error: `Email isn't set up: ${path.join(cfg.dataDir, 'mail.json')} is missing or incomplete` });
+    let body: { from?: unknown; subject?: unknown; text?: unknown; messageId?: unknown };
+    try {
+      body = JSON.parse(await readBody(req));
+    } catch {
+      return send(res, 400, { error: 'Send JSON: {"from", "subject", "text", "messageId"}' });
+    }
+    const from = str(body.from, 320).trim();
+    if (!from || !mailCfg.allow.includes(from.toLowerCase())) return send(res, 200, { ignored: 'not on the allow list' });
+    const floor = floors.get(mailCfg.floor);
+    if (!floor) return send(res, 503, { error: `There's no ${mailCfg.floor} floor for the mail to go to` });
+    const { mail, thread } = floor.mailbox.add({ from, subject: str(body.subject, 300), text: str(body.text, 20000), messageId: str(body.messageId, 500) || undefined });
+    const got = deliverMail(floor, mail, thread);
+    console.log(`  📧 email from ${from}: “${mail.subject}” → ${typeof got === 'string' ? `nobody (${got})` : got.name}`);
+    toastFloor(floor, typeof got === 'string' ? `📧 Email from ${from}: “${mail.subject}” — ${got.toLowerCase()}` : `📧 Email from ${from} for ${got.name}: “${mail.subject}”`, typeof got === 'string' ? 'warn' : 'info');
+    emitMail(floor);
+    send(res, 200, { ok: true, id: mail.id, to: typeof got === 'string' ? undefined : got.name });
+  };
+  const officeMail = async (req: http.IncomingMessage, res: http.ServerResponse, url: URL) => {
+    const workerId = url.searchParams.get('worker') ?? '';
+    const auth = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
+    const floor = workerFloor(workerId);
+    const agent = floor?.workers.authenticate(workerId, auth);
+    if (!floor || !agent) return send(res, 401, { error: 'Send your own AGENT_OFFICE_WORKER_ID as ?worker= and AGENT_OFFICE_HOOK_TOKEN as the bearer token' });
+    const front = agent.deskId === RECEPTION.id;
+    if (req.method === 'GET') {
+      if (!front) return send(res, 403, { error: 'Only whoever is at reception can list the mail' });
+      return send(res, 200, { mails: floor.mailbox.list().slice(-20).map(({ messageId: _m, ...m }) => m) });
+    }
+    if (req.method !== 'POST') return send(res, 405, { error: 'GET or POST' });
+    let body: { action?: unknown; mail?: unknown; text?: unknown; to?: unknown; note?: unknown };
+    try {
+      body = JSON.parse(await readBody(req));
+    } catch {
+      return send(res, 400, { error: 'Send JSON: {"action": "reply"|"transfer", "mail": "…", …}' });
+    }
+    const mail = floor.mailbox.get(str(body.mail, 20));
+    if (!mail) return send(res, 404, { error: 'No such email on this floor' });
+    if (!front && mail.assignee !== agent.id) return send(res, 403, { error: 'That email was put through to someone else' });
+    if (body.action === 'reply') {
+      const mailCfg = loadMailConfig(cfg.dataDir);
+      if (!mailCfg) return send(res, 503, { error: "Email isn't set up on this office" });
+      const text = str(body.text, 20000).trim();
+      if (!text) return send(res, 400, { error: 'The reply is empty' });
+      const error = await sendReply(mailCfg, mail, text);
+      floor.mailbox.noteReply(mail, { by: agent.name, at: Date.now(), text, error });
+      emitMail(floor);
+      if (error) return send(res, 502, { error });
+      toastFloor(floor, `📨 ${agent.name} replied to ${mail.from}: “${mail.subject}”`);
+      return send(res, 200, { ok: true });
+    }
+    if (body.action === 'transfer') {
+      const name = str(body.to, 100).trim().toLowerCase();
+      const to = floor.workers.list().find((w) => w.name.toLowerCase() === name && w.id !== agent.id);
+      if (!to) return send(res, 404, { error: `There's nobody called ${str(body.to, 100)} on this floor — office-queue workers lists who is` });
+      const got = deliverMail(floor, mail, to.id, { by: agent.name, note: str(body.note, 2000).trim() || undefined });
+      if (typeof got === 'string') return send(res, 409, { error: got });
+      toastFloor(floor, `📞 ${agent.name} put ${mail.from} through to ${got.name}`);
+      emitMail(floor);
+      return send(res, 200, { ok: true, to: got.name });
+    }
+    send(res, 400, { error: 'action is reply or transfer' });
+  };
+  const mailView = (floor: Floor) => floor.mailbox.list().slice(-50).map(({ messageId: _m, ...m }) => m);
+  const emitMail = (floor: Floor) => {
+    for (const c of clients.values()) if (c.peer.floor === floor.id && c.mailOpen) sendTo(c, { t: 'mail.list', mails: mailView(floor), configured: loadMailConfig(cfg.dataDir)?.floor === floor.id });
+  };
+
   // Workers' terminals outlive a restart of the office (see ptys.ts) with this address in their
   // environment, so listen where the last office did when that port is free.
   const hookPortPath = path.join(cfg.dataDir, 'hook-port');
@@ -1306,6 +1401,24 @@ export async function startServer(cfg: Config) {
       case 'floor.browse':
         sendTo(c, { t: 'floor.browse', ...building.browse(str(msg.dir, 1024)) });
         break;
+      case 'mail.list': {
+        const floor = here();
+        if (!floor) break;
+        c.mailOpen = true;
+        sendTo(c, { t: 'mail.list', mails: mailView(floor), configured: loadMailConfig(cfg.dataDir)?.floor === floor.id });
+        break;
+      }
+      case 'mail.transfer': {
+        const floor = here();
+        if (!floor) break;
+        const mail = floor.mailbox.get(str(msg.mail, 20));
+        if (!mail) return warn(c, 'No such email on this floor');
+        const got = deliverMail(floor, mail, str(msg.workerId, 32), { by: who });
+        if (typeof got === 'string') return warn(c, got);
+        toastFloor(floor, `📞 ${who} put ${mail.from} through to ${got.name}`);
+        emitMail(floor);
+        break;
+      }
       case 'cowork.list': {
         const on = sessionFloors();
         try {

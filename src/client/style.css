@@ -1153,3 +1153,15 @@ a.when:hover { text-decoration: underline; }
   .prompts-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: 180px minmax(0, 1fr); }
   .prompt-list { border-right: 0; border-bottom: 3px solid var(--ink); }
 }
+
+/* ---------- Front desk mail ---------- */
+.modal.mail { width: min(680px, 100%); }
+.mail-list { display: grid; gap: 10px; max-height: min(70vh, 640px); overflow-y: auto; }
+.mail-card { border: 3px solid var(--ink); border-radius: 12px; background: #fff; padding: 10px 12px; }
+.mail-head { display: flex; gap: 8px; align-items: baseline; justify-content: space-between; }
+.mail-head .when { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.mail-meta { font-size: 12px; font-weight: 700; color: var(--muted); margin: 2px 0 6px; overflow-wrap: anywhere; }
+.mail-text { margin: 0; white-space: pre-wrap; font: inherit; font-size: 13px; max-height: 180px; overflow-y: auto; }
+.mail-reply { margin: 8px 0 0 12px; padding-left: 8px; border-left: 3px solid var(--paper-2); }
+.mail-reply.failed .mail-meta { color: var(--bad); }
+.mail-actions { margin-top: 8px; }

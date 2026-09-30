@@ -9,6 +9,7 @@ import { excludeFromGit } from './config.js';
 import { agentProviders, configuredProvider } from './agents.js';
 import { WorkerManager, type HookEnv } from './workers.js';
 import { GitHub, MergeWatch } from './github.js';
+import { Mailbox } from './mail.js';
 import { TaskQueue } from './queue.js';
 import { Changes } from './changes.js';
 import { Decor } from './decor.js';
@@ -90,6 +91,8 @@ export class Floor {
   readonly project: ProjectInfo;
   readonly workers: WorkerManager;
   readonly github: GitHub;
+  /** The email that came in for this floor's front desk (see mail.ts). */
+  readonly mailbox: Mailbox;
   readonly queue: TaskQueue;
   readonly changes: Changes;
   readonly decor: Decor;
@@ -122,6 +125,7 @@ export class Floor {
     excludeFromGit(def.dir);
     this.project = projectInfo(def.dir, def.name, ctx.agentCmd, ctx.agentArgs);
     this.docs = new Docs(def.dir);
+    this.mailbox = new Mailbox(dataDir);
 
     // Before the workers, so it hears about the ones who wake up needing input.
     this.dog = new Dog(def.id, dataDir, {

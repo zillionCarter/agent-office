@@ -1391,7 +1391,9 @@ process.stdin.on('end', () => {
         `else ${shq(process.execPath)} ${shq(nodeHook)} ${event} >/dev/null 2>&1; fi; true`;
       hooks[event] = [{ ...(matcher ? { matcher } : {}), hooks: [{ type: 'command', command }] }];
     }
-    writeFileSync(this.settingsPath, JSON.stringify({ hooks }, null, 2), { mode: 0o600 });
+    // The office's own command runs without asking: the office checks who may do what with it.
+    const allow = ['Bash(office-queue:*)', `Bash(${path.join(this.dataDir, 'bin', 'office-queue')}:*)`];
+    writeFileSync(this.settingsPath, JSON.stringify({ hooks, permissions: { allow } }, null, 2), { mode: 0o600 });
   }
 
   /**

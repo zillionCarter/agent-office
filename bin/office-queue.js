@@ -13,7 +13,12 @@ const USAGE = `Usage:
   …the prompt…                                       prints the new task's id
   EOF
   office-queue remove <id>                           take a waiting task off
-  office-queue workers                               who's on this floor, and what each one is doing`;
+  office-queue workers                               who's on this floor, and what each one is doing
+  office-queue mail list                             the latest email for the front desk (reception only)
+  office-queue mail reply <id> <<'EOF'               answer email <id>: goes back to its sender, in its thread;
+  …the reply…                                        the text on stdin (or --text "…")
+  EOF
+  office-queue mail transfer <id> <name> [--note "…"]  put the sender through to a coworker`;
 
 /** A mistake in how the command was called: the usage is shown with it. */
 export class UsageError extends Error {}
@@ -35,6 +40,43 @@ export function parseArgs(argv) {
   if (cmd === 'list' || cmd === 'ls') {
     if (rest.length) throw new UsageError(`list takes no arguments (got ${rest.join(' ')})`);
     return { cmd: 'list' };
+  }
+  if (cmd === 'mail') {
+    const [sub, ...args] = rest;
+    if (sub === 'list' || sub === 'ls') {
+      if (args.length) throw new UsageError('mail list takes no arguments');
+      return { cmd: 'mail-list' };
+    }
+    if (sub === 'reply') {
+      const [id, ...more] = args;
+      if (!id || id.startsWith('-')) throw new UsageError('mail reply takes the email id, e.g. office-queue mail reply 3f9c2a <<\'EOF\' … EOF');
+      /** @type {{ cmd: 'mail-reply', id: string, text?: string }} */
+      const out = { cmd: 'mail-reply', id };
+      for (let i = 0; i < more.length; i++) {
+        const arg = more[i];
+        if (arg === '--text' && i + 1 < more.length) out.text = more[++i];
+        else if (arg.startsWith('--text=')) out.text = arg.slice(7);
+        else throw new UsageError(`Unexpected argument: ${arg} (give the reply on stdin or with --text "…")`);
+      }
+      return out;
+    }
+    if (sub === 'transfer') {
+      const [id, ...more] = args;
+      /** @type {{ cmd: 'mail-transfer', id: string, to: string, note?: string }} */
+      const out = { cmd: 'mail-transfer', id: id ?? '', to: '' };
+      const names = [];
+      for (let i = 0; i < more.length; i++) {
+        const arg = more[i];
+        if (arg === '--note' && i + 1 < more.length) out.note = more[++i];
+        else if (arg.startsWith('--note=')) out.note = arg.slice(7);
+        else if (arg.startsWith('-')) throw new UsageError(`Unknown option for mail transfer: ${arg}`);
+        else names.push(arg);
+      }
+      out.to = names.join(' ').trim();
+      if (!out.id || !out.to) throw new UsageError('mail transfer takes the email id and a coworker\'s name, e.g. office-queue mail transfer 3f9c2a Byte --note "invoice question"');
+      return out;
+    }
+    throw new UsageError(`mail takes list, reply or transfer${sub ? ` (got ${sub})` : ''}`);
   }
   if (cmd === 'workers' || cmd === 'who') {
     if (rest.length) throw new UsageError(`workers takes no arguments (got ${rest.join(' ')})`);
@@ -94,9 +136,20 @@ export function officeEnv(env) {
  * @returns {{ method: string, url: string, headers: Record<string, string>, body?: string }}
  */
 export function buildRequest(cmd, office, prompt) {
-  const url = new URL(`${office.url}/office/queue`);
+  const mail = cmd.cmd.startsWith('mail-');
+  const url = new URL(`${office.url}/office/${mail ? 'mail' : 'queue'}`);
   url.searchParams.set('worker', office.worker);
   const headers = { authorization: `Bearer ${office.token}` };
+  if (cmd.cmd === 'mail-list') return { method: 'GET', url: url.href, headers };
+  if (cmd.cmd === 'mail-reply' || cmd.cmd === 'mail-transfer') {
+    let body;
+    if (cmd.cmd === 'mail-reply') {
+      const text = (cmd.text ?? prompt ?? '').replace(/\r\n?/g, '\n').trim();
+      if (!text) throw new UsageError(`The reply is empty: pipe it in (office-queue mail reply ${cmd.id} <<'EOF' … EOF) or pass --text "…"`);
+      body = { action: 'reply', mail: cmd.id, text };
+    } else body = { action: 'transfer', mail: cmd.id, to: cmd.to, ...(cmd.note ? { note: cmd.note } : {}) };
+    return { method: 'POST', url: url.href, headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify(body) };
+  }
   if (cmd.cmd === 'list') return { method: 'GET', url: url.href, headers };
   if (cmd.cmd === 'workers') {
     url.searchParams.set('view', 'workers');
@@ -151,6 +204,22 @@ export function formatWorkers(view) {
     if (w.doing && w.doing !== w.task) parts.push(`now: ${w.doing}`);
     if (w.pr) parts.push(`PR #${w.pr.number} ${w.pr.url}`);
     lines.push(parts.join(' · '));
+  }
+  return lines.join('\n');
+}
+
+/**
+ * The front desk's latest email, one line each (and its replies under it).
+ * @param {{ mails?: Array<Record<string, any>> }} view
+ */
+export function formatMail(view) {
+  const mails = view?.mails ?? [];
+  if (!mails.length) return 'No email yet.';
+  const lines = [];
+  for (const m of mails) {
+    const when = new Date(m.at).toISOString().slice(0, 16).replace('T', ' ');
+    lines.push(`${m.id}  ${when}  ${m.from} · ${m.subject}${m.assigneeName ? ` · with ${m.assigneeName}` : ''}`);
+    for (const r of m.replies ?? []) lines.push(`        ↳ ${r.by} replied${r.error ? ` (failed: ${r.error})` : ''}`);
   }
   return lines.join('\n');
 }
@@ -221,6 +290,10 @@ export async function main(argv, io = {}) {
       if (stdin.isTTY) throw new UsageError(`The task needs a prompt: pipe it in (office-queue add --title "…" <<'EOF' … EOF) or pass --prompt "…"`);
       prompt = await readStdin(stdin);
     }
+    if (cmd.cmd === 'mail-reply' && cmd.text === undefined) {
+      if (stdin.isTTY) throw new UsageError(`The reply is empty: pipe it in (office-queue mail reply ${cmd.id} <<'EOF' … EOF) or pass --text "…"`);
+      prompt = await readStdin(stdin);
+    }
     const req = buildRequest(cmd, office, prompt);
     const res = await send(req, fetchImpl);
     if (res.status < 200 || res.status >= 300) {
@@ -230,6 +303,9 @@ export async function main(argv, io = {}) {
     if (cmd.cmd === 'list') out(formatQueue(res.body));
     else if (cmd.cmd === 'workers') out(formatWorkers(res.body));
     else if (cmd.cmd === 'remove') out(`Took ${cmd.id} off the queue.`);
+    else if (cmd.cmd === 'mail-list') out(formatMail(res.body));
+    else if (cmd.cmd === 'mail-reply') out(`Sent your reply to email ${cmd.id}.`);
+    else if (cmd.cmd === 'mail-transfer') out(`Put email ${cmd.id} through to ${res.body?.to ?? cmd.to}.`);
     else {
       const task = res.body?.task ?? {};
       out(task.id ?? '');
