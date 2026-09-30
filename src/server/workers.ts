@@ -7,7 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { CodexUsageReader } from './codex-usage.js';
 import headless from '@xterm/headless';
 import serialize from '@xterm/addon-serialize';
-import type { AgentChoice, AgentEffort, AgentProvider, Run, TerminalHit, WorkerInfo, WorkerKind, WorkerStatus, WorkerTask } from '../shared/protocol.js';
+import type { AgentChoice, AgentEffort, AgentProvider, Run, TerminalHit, WorkerInfo, WorkerKind, WorkerOutfit, WorkerStatus, WorkerTask } from '../shared/protocol.js';
+import { GLASSES, HATS, HAT_COLORS } from '../shared/avatar.js';
 import { FAILS_TO_DESPAIR, outputFailed, toolAction } from '../shared/actions.js';
 import { FLAG_BOLD, FLAG_DIM, FLAG_INVERSE, RGB_FLAG, isAgentEffort, isClaudeModel } from '../shared/protocol.js';
 import { ROLE_BY_ID, isWorkerRole, type WorkerRole } from '../shared/roles.js';
@@ -16,7 +17,7 @@ import { DESK_BY_ID, STATION_AGENT, nextFreeSeat } from '../shared/layout.js';
 import { claudeProjectDir } from './sessions.js';
 import { QUEUE_AGENT_DISALLOWED_TOOLS, stationBrief } from './stations.js';
 import { officePrompt, type PromptSource } from './prompts.js';
-import { isBusy } from '../shared/status.js';
+import { isAsleep, isBusy } from '../shared/status.js';
 import { gh } from './github.js';
 import type { ServiceOwner } from './services.js';
 import { TaskNamer, fallbackTask } from './tasks.js';
@@ -343,6 +344,38 @@ export class WorkerManager {
     return nextFreeSeat((id) => this.deskOccupied(id))?.id;
   }
 
+  /**
+   * Renames, repaints or dresses a worker, or sets its standing instructions (in its brief from its
+   * next start; `tell` types them into its session now too). Returns why it can't, if it can't.
+   */
+  customize(id: string, by: string, patch: { name?: string; color?: string; outfit?: WorkerOutfit; instructions?: string; tell?: boolean }): string | undefined {
+    const w = this.workers.get(id);
+    if (!w) return 'No such worker';
+    const { info } = w;
+    if (patch.name !== undefined) {
+      const name = patch.name.replace(/\s+/g, ' ').trim().slice(0, 24);
+      if (!name) return 'Give them a name';
+      const taken = [...this.workers.values()].some((o) => o !== w && o.info.name.replace(/ 🐚$/, '').toLowerCase() === name.toLowerCase());
+      if (taken) return `There's already someone called ${name} on this floor`;
+      info.name = info.kind === 'shell' ? `${name} 🐚` : name;
+    }
+    if (patch.color !== undefined) {
+      if (!/^#[0-9a-fA-F]{6}$/.test(patch.color)) return 'That color is not a #rrggbb color';
+      info.color = patch.color;
+    }
+    if (patch.outfit !== undefined) info.outfit = cleanOutfit(patch.outfit);
+    let told: string | undefined;
+    if (patch.instructions !== undefined && info.kind === 'agent') {
+      const text = patch.instructions.replace(/\r\n?/g, '\n').trim().slice(0, 4000);
+      const changed = (info.instructions ?? '') !== text;
+      info.instructions = text || undefined;
+      if (changed && patch.tell && text && w.pty && !isAsleep(info.status)) told = this.prompt(id, `${by} gave you standing instructions (they're part of your brief from now on):\n\n${text}\n\nAcknowledge in one line and carry on.`, by);
+    }
+    this.emitUpdate(w);
+    this.persist();
+    return told;
+  }
+
   /** Moves a worker to another seat on this floor (the reception desk, say), still running. Returns why it can't, if it can't. */
   reseat(id: string, deskId: string): string | undefined {
     const w = this.workers.get(id);
@@ -373,7 +406,7 @@ export class WorkerManager {
    * started in this floor's folder is looked for (see sessions.ts). What it spent before is its own,
    * not today's, so the tracker starts from the end of the transcript.
    */
-  carryOn(deskId: string, by: string, a: { sessionId: string; transcript: string; name?: string; color?: string; role?: WorkerRole; model?: string; effort?: AgentEffort; title?: string; activity?: string }): WorkerInfo | string {
+  carryOn(deskId: string, by: string, a: { sessionId: string; transcript: string; name?: string; color?: string; role?: WorkerRole; model?: string; effort?: AgentEffort; title?: string; activity?: string; outfit?: WorkerOutfit; instructions?: string }): WorkerInfo | string {
     const seat = DESK_BY_ID.get(deskId);
     if (!seat) return 'Unknown desk';
     if (seat.station || seat.room) return 'Only a desk or a bean bag will do';
@@ -398,6 +431,8 @@ export class WorkerManager {
       model: isClaudeModel(a.model) ? a.model : undefined,
       effort: isAgentEffort(a.effort) ? a.effort : undefined,
       role: roleOrNone(a.role),
+      outfit: a.outfit ? cleanOutfit(a.outfit) : undefined,
+      instructions: a.instructions?.slice(0, 4000) || undefined,
       deskId,
       name,
       color: a.color ?? COLORS[Math.floor(Math.random() * COLORS.length)],
@@ -995,7 +1030,9 @@ export class WorkerManager {
     const command = this.command(info);
     const commandPath = isShell ? undefined : configured ? this.agentPath : resolveCommand(command);
     let args = isShell ? (WIN && !process.env.SHELL ? [] : ['-l']) : configured ? [...this.agentArgs] : [];
-    const brief = !isShell && info.role ? ROLE_BY_ID.get(info.role)?.brief : undefined;
+    const roleBrief = !isShell && info.role ? ROLE_BY_ID.get(info.role)?.brief : undefined;
+    const own = !isShell && info.instructions ? `Standing instructions for you, ${info.name}, from the person you work for:\n${info.instructions}` : undefined;
+    const brief = [roleBrief, own].filter(Boolean).join('\n\n') || undefined;
     // OpenCode and Codex have no system prompt to add to: a new session gets the brief ahead of its first request instead.
     if (brief && !isClaude && !resumeSessionId) prompt = prompt ? `${brief}\n\n---\n\n${prompt}` : `${brief}\n\n---\n\nSay hello in one line and ask what I need.`;
     if (isClaude) {
@@ -1428,6 +1465,8 @@ process.stdin.on('end', () => {
       model: info.model,
       effort: info.effort,
       role: info.role,
+      outfit: info.outfit,
+      instructions: info.instructions,
       deskId: info.deskId,
       name: info.name,
       color: info.color,
@@ -1478,6 +1517,8 @@ process.stdin.on('end', () => {
           model: provider === 'opencode' && isValidOpenCodeModel(s.model) ? s.model : provider === 'claude' && isClaudeModel(s.model) ? s.model : undefined,
           effort: provider === 'claude' && isAgentEffort(s.effort) ? s.effort : undefined,
           role: isWorkerRole(s.role) ? roleOrNone(s.role) : undefined,
+          outfit: s.outfit ? cleanOutfit(s.outfit) : undefined,
+          instructions: typeof s.instructions === 'string' && s.instructions.trim() ? s.instructions.slice(0, 4000) : undefined,
           deskId: s.deskId,
           name: s.name ?? 'Worker',
           color: s.color ?? COLORS[0],
@@ -1782,4 +1823,10 @@ function safeEq(a: string, b: string) {
 /** A coder is what a worker with no role is, so it isn't saved as one. */
 function roleOrNone(role: WorkerRole | undefined): WorkerRole | undefined {
   return role === 'coder' ? undefined : role;
+}
+
+/** An outfit with every index in range (a bad one is taken off). */
+function cleanOutfit(o: Partial<WorkerOutfit>): WorkerOutfit {
+  const idx = (v: unknown, n: number) => (Number.isInteger(v) && (v as number) >= 0 && (v as number) < n ? (v as number) : 0);
+  return { hat: idx(o.hat, HATS.length), hatColor: idx(o.hatColor, HAT_COLORS.length), glasses: idx(o.glasses, GLASSES.length) };
 }

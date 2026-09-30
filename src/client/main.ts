@@ -61,6 +61,7 @@ import { openSettings } from './ui/settings';
 import { hiringPaused, renderUsage, usageLabel, usageTitle } from './ui/usage';
 import { elevatorPanelOpen, openElevator, routeElevatorMessage } from './ui/elevator';
 import { openMail, routeMailMessage } from './ui/mail';
+import { openWorkerLook } from './ui/workerlook';
 import { cantMove, openCoworkPicker, openMoveFloor, routeCoworkMessage } from './ui/cowork';
 import { toggleFloorMenu } from './ui/floormenu';
 import { providerLabel, officeChoice, resolvedProvider, modelBadge } from './ui/provider';
@@ -564,6 +565,8 @@ interface WorkerView {
   deskId: string;
   status: string;
   acked: boolean;
+  /** The name on its tag, as last drawn. */
+  name: string;
 }
 const workerViews = new Map<string, WorkerView>();
 /** Workers a `worker.remove` is taking out of the store right now. They walk out of the building; a worker that's gone because you changed floors just vanishes. */
@@ -1150,9 +1153,15 @@ function syncWorkers() {
       desk.laptopAnchor.add(laptop.root);
       noOutline(desk.group);
       desk.chair.rotation.y = 0;
-      v = { model, laptop, deskId: w.deskId, status: '', acked: true };
+      v = { model, laptop, deskId: w.deskId, status: '', acked: true, name: w.name };
       workerViews.set(w.id, v);
     }
+    if (v.name !== w.name) {
+      v.model.setName(w.name);
+      v.name = w.name;
+    }
+    v.model.setColor(w.color);
+    v.model.setOutfit(w.outfit);
     if (v.deskId !== w.deskId) {
       // Moved to another seat (the reception desk, say): it and its laptop go with it.
       departures.vacate(w.deskId);
@@ -1702,6 +1711,7 @@ function interact(target: Interactable | null, key: DeskKey, note = aimedNote) {
     if (key === 'X' && w) return killWorker(w.id);
     if (key === 'O' && w) return pullRequestFor(w);
     if (key === 'L' && w) return moveWorker(w);
+    if (key === 'U' && w) return openWorkerLook(net, w);
     return;
   }
   if (target.kind === 'station' && target.deskId) {
@@ -2558,6 +2568,7 @@ function deskHint(deskId: string): Hint {
       key('C', 'Changes'),
       isAsleep(w.status) ? key('R', shell ? 'Restart' : 'Resume') : key('P', shell ? 'Run command' : 'Prompt'),
       w.pr ? key('O', `PR #${w.pr.number}`) : w.prOpening ? aside('⏳ Opening PR…') : prReady(w) ? key('O', 'Open PR') : '',
+      key('U', 'Customize'),
       (store.floors.length > 1 && !cantMove(w)) || receptionFor(w) ? key('L', 'Move') : '',
       key('X', 'Send home'),
     ],
@@ -2727,7 +2738,7 @@ function emoteKey(e: KeyboardEvent): boolean {
 }
 
 /** Keys that use what you're facing: at a desk, each does something else (see interact). */
-const DESK_KEYS = { KeyE: 'E', KeyP: 'P', KeyR: 'R', KeyX: 'X', KeyB: 'B', KeyC: 'C', KeyO: 'O', KeyL: 'L' } as const;
+const DESK_KEYS = { KeyE: 'E', KeyP: 'P', KeyR: 'R', KeyX: 'X', KeyB: 'B', KeyC: 'C', KeyO: 'O', KeyL: 'L', KeyU: 'U' } as const;
 type DeskKey = (typeof DESK_KEYS)[keyof typeof DESK_KEYS];
 
 function use(it: Interactable | null, key: DeskKey, note = aimedNote) {

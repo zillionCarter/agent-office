@@ -1447,6 +1447,22 @@ export async function startServer(cfg: Config) {
         toastFloor(floor, `📥 ${who} brought in “${chat.title}” from Cowork: ${r.name} carries on with it`);
         break;
       }
+      case 'worker.customize': {
+        const w = worker(msg.workerId);
+        if (!w) return warn(c, 'No such worker');
+        const before = w.info.name;
+        const err = w.floor.workers.customize(w.wid, who, {
+          name: msg.name === undefined ? undefined : str(msg.name, 60),
+          color: msg.color === undefined ? undefined : str(msg.color, 7),
+          outfit: msg.outfit && typeof msg.outfit === 'object' ? msg.outfit : undefined,
+          instructions: msg.instructions === undefined ? undefined : str(msg.instructions, 4000),
+          tell: msg.tell === true,
+        });
+        if (err) return warn(c, err);
+        const after = w.floor.workers.get(w.wid)?.name ?? before;
+        if (after !== before) toastFloor(w.floor, `🏷️ ${who} renamed ${before} to ${after}`);
+        break;
+      }
       case 'worker.seat': {
         const w = worker(msg.workerId);
         if (!w) return warn(c, 'No such worker');
@@ -1493,6 +1509,8 @@ export async function startServer(cfg: Config) {
             effort: info.effort,
             title: info.title,
             activity: info.activity,
+            outfit: info.outfit,
+            instructions: info.instructions,
           });
           if (typeof r === 'string') return warn(c, `${info.name} left ${floor.def.name} but couldn't sit down on ${target.def.name}: ${r}`);
           toastFloor(floor, `🛗 ${who} sent ${info.name} up to ${target.def.name}`);

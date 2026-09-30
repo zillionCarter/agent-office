@@ -1,7 +1,7 @@
 import * as THREE from 'three';
-import { HAIR_COLORS, HAIR_STYLES, HATS, PANTS_COLORS, SKIN_TONES, type Look } from '../../shared/avatar';
+import { HAIR_COLORS, HAIR_STYLES, HATS, PANTS_COLORS, SKIN_TONES, lookFromSeed, type Look } from '../../shared/avatar';
 import { EMOTE_BY_ID, type Emote, type EmoteId } from '../../shared/emotes';
-import type { CarriedIssue, Theme, WorkerAction, WorkerStatus, WorkerTask } from '../../shared/protocol';
+import type { CarriedIssue, Theme, WorkerAction, WorkerOutfit, WorkerStatus, WorkerTask } from '../../shared/protocol';
 import type { Drink } from '../../shared/rooftop';
 import { isAsleep, type WorkerPr } from '../../shared/status';
 import { HIPS } from '../player';
@@ -1381,6 +1381,9 @@ export class Worker {
   private skin: THREE.MeshToonMaterial;
   /** Dressed up for a holiday (see setCostume), and what it's wearing. */
   private costume: Theme | null = null;
+  /** Its own hat and glasses (see setOutfit), and which ones they are. */
+  private gear = new THREE.Group();
+  private gearKey = '';
   private outfit: THREE.Object3D[] = [];
   /** Where it is in its own shamble, so a room full of zombies doesn't sway in step. */
   private phase = Math.random() * Math.PI * 2;
@@ -1445,7 +1448,46 @@ export class Worker {
     for (const prop of [this.papers.group, this.globe.group]) prop.visible = false;
     this.root.add(this.globe.group);
 
+    // A hat and glasses picked for it (see setOutfit), on a head the size of a person's, scaled down.
+    this.gear.position.set(0, 0.7, 0.03);
+    this.gear.scale.setScalar(0.84);
+    this.body.add(this.gear);
+
     this.setName(name);
+  }
+
+  /** Repaints its body, arms and feet. */
+  setColor(color: string) {
+    if (color === this.color) return;
+    this.color = color;
+    // Dressed for a holiday: dressed again, which repaints under the costume's tint.
+    const theme = this.costume;
+    this.costume = null;
+    if (theme) this.setCostume(theme);
+    else this.skin.color.set(color);
+  }
+
+  /** Puts on a hat and glasses from the people's wardrobe; none takes them off. */
+  setOutfit(o: WorkerOutfit | undefined) {
+    const key = o ? `${o.hat}|${o.hatColor}|${o.glasses}` : '';
+    if (key === this.gearKey) return;
+    this.gearKey = key;
+    undress([...this.gear.children]);
+    if (!o) return;
+    // Its eyes are bigger than a person's, so its glasses are too, and sit further out.
+    const look = { ...lookFromSeed(''), hat: o.hat, hatColor: o.hatColor, glasses: o.glasses };
+    const glasses = buildGlasses(look);
+    if (glasses) {
+      glasses.scale.setScalar(1.3);
+      glasses.position.set(0, 0.0, -0.1);
+      this.gear.add(glasses);
+    }
+    const hat = buildHat(look);
+    if (hat) {
+      hat.userData.hat = true;
+      hat.visible = !this.costume;
+      this.gear.add(hat);
+    }
   }
 
   /** Where the globe floats, in its own space: beside its laptop, where the card over its head doesn't hide it. */
@@ -1475,6 +1517,8 @@ export class Worker {
       this.outfit.push(o);
     };
     this.skin.color.set(this.color);
+    // A holiday hat goes on in place of its own.
+    for (const o of this.gear.children) if (o.userData.hat) o.visible = !theme;
     if (theme === 'halloween') {
       this.skin.color.lerp(ZOMBIE, 0.6).multiplyScalar(0.85);
       wear(this.body, zombieWorker(this.skin));

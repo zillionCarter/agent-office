@@ -88,6 +88,10 @@ export interface WorkerInfo {
   effort?: AgentEffort;
   /** What it was hired as (see shared/roles.ts); none is a coder. */
   role?: WorkerRole;
+  /** A hat and glasses from the people's wardrobe (see shared/avatar.ts), picked with U at its desk. */
+  outfit?: WorkerOutfit;
+  /** Standing instructions of its own, added to its brief every time it starts. */
+  instructions?: string;
   deskId: string;
   name: string;
   color: string;
@@ -675,6 +679,13 @@ export interface FolderListing {
   error?: string;
 }
 
+/** What a worker wears: indexes into HATS, HAT_COLORS and GLASSES. */
+export interface WorkerOutfit {
+  hat: number;
+  hatColor: number;
+  glasses: number;
+}
+
 /** An email that came in for a floor's front desk (see server/mail.ts). */
 export interface MailInfo {
   id: string;
@@ -1157,6 +1168,11 @@ export type ClientMsg =
   | { t: 'cowork.list' }
   /** Bring a Cowork chat onto your floor as a Claude Code worker carrying on the conversation, at `deskId` or the first free seat. */
   | { t: 'cowork.import'; chat: string; deskId?: string }
+  /**
+   * Rename a worker, repaint it, dress it, or give it standing instructions. `tell` also types the new
+   * instructions into its session now (they're in its brief from its next start either way).
+   */
+  | { t: 'worker.customize'; workerId: string; name?: string; color?: string; outfit?: WorkerOutfit; instructions?: string; tell?: boolean }
   /** Move a worker to another seat on its floor (the reception desk, say), still running. */
   | { t: 'worker.seat'; workerId: string; deskId: string }
   /** Move a Claude Code worker to another floor, conversation and all: it stops here and carries on there. */

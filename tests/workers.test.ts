@@ -1160,3 +1160,41 @@ test('whoever is hired at reception is a receptionist with the queue on its PATH
   assert.equal(workers.get(ada.id)?.deskId, 'reception');
   assert.match(workers.reseat(ada.id, 'station-queue')!, /Only a desk/);
 });
+
+test('a worker can be renamed, repainted, dressed and given standing instructions that ride along in its brief', async (t) => {
+  const f = fixture();
+  const updates: WorkerInfo[] = [];
+  isolateProviderEnvironment(f, t);
+  const previousLog = process.env.FAKE_AGENT_LOG;
+  process.env.FAKE_AGENT_LOG = f.log;
+  t.after(() => {
+    if (previousLog === undefined) delete process.env.FAKE_AGENT_LOG;
+    else process.env.FAKE_AGENT_LOG = previousLog;
+    f.close();
+  });
+  const workers = manager(f, f.claude, updates);
+  t.after(() => workers.shutdown());
+  const a = workers.spawn('desk-1', 'Sam', 'hi', false, 'agent', 'claude');
+  const b = workers.spawn('desk-2', 'Sam', 'hi', false, 'agent', 'claude');
+  if (typeof a === 'string' || typeof b === 'string') return assert.fail('hired');
+
+  assert.match(workers.customize(a.id, 'Sam', { name: b.name.toUpperCase() })!, /already someone called/);
+  assert.match(workers.customize(a.id, 'Sam', { name: '   ' })!, /name/);
+  assert.match(workers.customize(a.id, 'Sam', { color: 'red' })!, /#rrggbb/);
+  assert.equal(workers.customize(a.id, 'Sam', { name: '  Penny   Lane ', color: '#123456', outfit: { hat: 2, hatColor: 99, glasses: 1 }, instructions: 'Use British English.' }), undefined);
+  const now = workers.get(a.id)!;
+  assert.equal(now.name, 'Penny Lane');
+  assert.equal(now.color, '#123456');
+  assert.deepEqual(now.outfit, { hat: 2, hatColor: 0, glasses: 1 }, 'an index out of range is taken off');
+  assert.equal(now.instructions, 'Use British English.');
+
+  // The next start carries them in its brief.
+  const launches = () => f.read().filter((r) => r.kind === 'claude' && r.env.workerId === a.id && r.args.includes('--settings'));
+  await waitFor(launches, (l) => l.length === 1);
+  await workers.kill(a.id);
+  const moved = workers.carryOn('desk-3', 'Sam', { sessionId: 's-1', transcript: path.join(f.root, 'none.jsonl'), name: now.name, instructions: now.instructions, outfit: now.outfit });
+  if (typeof moved === 'string') return assert.fail(moved);
+  const [launch] = await waitFor(() => f.read().filter((r) => r.kind === 'claude' && r.env.workerId === moved.id && r.args.includes('--settings')), (l) => l.length === 1);
+  const brief = launch.args[launch.args.indexOf('--append-system-prompt') + 1];
+  assert.match(brief, /Standing instructions for you, Penny Lane[\s\S]*British English/);
+});
