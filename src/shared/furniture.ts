@@ -2,7 +2,7 @@
 // they've moved its desks to. The server keeps each floor's in its furniture.json; every browser on
 // the floor builds it (see client/world/furniture.ts). Shared so both sides agree on sizes and limits.
 
-import { DESKS, FLOOR, RECEPTION } from './layout.js';
+import { DESKS, FLOOR, LOT, RECEPTION } from './layout.js';
 
 export type FurnitureKind = 'wall' | 'glass' | 'divider' | 'door' | 'plant' | 'couch' | 'armchair' | 'table' | 'lamp' | 'rug' | 'cooler' | 'bookcase' | 'filing' | 'sign' | 'asset';
 
@@ -129,10 +129,15 @@ export const MAX_LENGTH = 16;
 export const MOVABLE_DESKS = new Set([...DESKS.map((d) => d.id), RECEPTION.id]);
 
 const round = (n: number, step: number) => Math.round(n / step) * step;
-/** Keeps a spot inside the room, a little in from the walls. */
-export function clampToFloor(x: number, z: number): { x: number; z: number } {
-  return { x: Math.min(FLOOR.maxX - 0.2, Math.max(FLOOR.minX + 0.2, round(x, 0.05))), z: Math.min(FLOOR.maxZ - 0.2, Math.max(FLOOR.minZ + 0.2, round(z, 0.05))) };
+export type Area = { minX: number; maxX: number; minZ: number; maxZ: number };
+
+/** Keeps a spot inside the room (or `area`: the lot), a little in from its edges. */
+export function clampToFloor(x: number, z: number, area: Area = FLOOR): { x: number; z: number } {
+  return { x: Math.min(area.maxX - 0.2, Math.max(area.minX + 0.2, round(x, 0.05))), z: Math.min(area.maxZ - 0.2, Math.max(area.minZ + 0.2, round(z, 0.05))) };
 }
+
+/** The lot beside the building (see LOT). */
+export const LOT_AREA: Area = LOT;
 
 /** An angle in [0, 2π), to a hundredth of a radian. */
 export function cleanAngle(a: number): number {
@@ -141,12 +146,12 @@ export function cleanAngle(a: number): number {
 }
 
 /** A placement with everything in range, or why it can't be one. */
-export function cleanPlacement(p: Partial<FurniturePlacement>): FurniturePlacement | string {
+export function cleanPlacement(p: Partial<FurniturePlacement>, area: Area = FLOOR): FurniturePlacement | string {
   const kind = p.kind as FurnitureKind;
   const def = FURNITURE[kind];
   if (!def) return 'Unknown piece of furniture';
   if (!Number.isFinite(p.x) || !Number.isFinite(p.z)) return 'Put it somewhere on the floor';
-  const { x, z } = clampToFloor(p.x as number, p.z as number);
+  const { x, z } = clampToFloor(p.x as number, p.z as number, area);
   const out: FurniturePlacement = { kind, x, z, rotY: cleanAngle(Number.isFinite(p.rotY) ? (p.rotY as number) : 0) };
   if (def.stretch && Number.isFinite(p.length)) out.length = Math.round(Math.min(MAX_LENGTH, Math.max(MIN_LENGTH, p.length as number)) * 20) / 20;
   if (def.colored && typeof p.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(p.color)) out.color = p.color.toLowerCase();

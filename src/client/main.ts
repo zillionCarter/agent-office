@@ -305,6 +305,12 @@ const BUILD_CENTER = new THREE.Vector2(0, 0);
 // What's been added to the floor in build mode, and its moved desks (see world/furniture.ts).
 const furniture = new FurnitureView(office.colliders, office, () => store.assets);
 office.group.add(furniture.group);
+// The lot beside the building, down on the street (see LOT): the whole building's.
+const lotView = new FurnitureView(office.colliders, office, () => store.assets, true);
+office.group.add(lotView.group);
+lotView.setBase(streetBelow(0));
+store.on('lot', () => lotView.apply(store.lot));
+store.on('assets', () => lotView.apply(store.lot));
 // The screens on your models, each showing a web page (see world/screens.ts).
 const screens = new ScreenLayer(canvas.parentElement!, office.interactables);
 office.group.add(screens.group);
@@ -362,6 +368,8 @@ const build = new BuildMode({
   scene,
   office,
   furniture,
+  lot: lotView,
+  street: () => player.street,
   // The catalog needs the mouse: the player lets go of it while it's open.
   setCatalog: (open) => {
     player.enabled = !open && !modalOpen();
@@ -611,6 +619,8 @@ function syncStack() {
   office.stack.set({ index: Math.max(0, index), count, up, down });
   office.setLevel(Math.max(0, index), count);
   player.street = streetBelow(index);
+  // The lot is down on the street, as far below as this floor is up.
+  lotView.setBase(streetBelow(index));
 }
 store.on('floors', syncStack);
 

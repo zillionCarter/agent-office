@@ -10,7 +10,7 @@ import { JUKEBOX_TUNES, type JukeboxState } from '../shared/jukebox';
 import type { CabinetFrame, CabinetState } from '../shared/cabinet';
 import type { BallState } from '../shared/hoop';
 
-export type Topic = 'peers' | 'workers' | 'issues' | 'pulls' | 'chat' | 'project' | 'screens' | 'team' | 'upgrade' | 'services' | 'decor' | 'usage' | 'limits' | 'queue' | 'me' | 'accounts' | 'notify' | 'machine' | 'floors' | 'floor' | 'projectsDir' | 'repos' | 'dog' | 'jukebox' | 'sky' | 'theme' | 'leaveOnMerge' | 'whiteboard' | 'drawing' | 'cabinet' | 'cabinetFrame' | 'meeting' | 'prompts' | 'ball' | 'furniture' | 'assets';
+export type Topic = 'peers' | 'workers' | 'issues' | 'pulls' | 'chat' | 'project' | 'screens' | 'team' | 'upgrade' | 'services' | 'decor' | 'usage' | 'limits' | 'queue' | 'me' | 'accounts' | 'notify' | 'machine' | 'floors' | 'floor' | 'projectsDir' | 'repos' | 'dog' | 'jukebox' | 'sky' | 'theme' | 'leaveOnMerge' | 'whiteboard' | 'drawing' | 'cabinet' | 'cabinetFrame' | 'meeting' | 'prompts' | 'ball' | 'furniture' | 'assets' | 'lot';
 
 const zeroUsage = (): Usage => ({ input: 0, output: 0, cacheWrite: 0, cacheRead: 0, cost: 0, calls: 0 });
 
@@ -149,6 +149,8 @@ class Store {
   decor: Decoration[] = [];
   /** Your own models and pictures: the building's library (see shared/assets.ts). */
   assets: AssetInfo[] = [];
+  /** What's been built on the lot beside the building: the same whichever floor you're on. */
+  lot: FurnitureState = { items: [], desks: {} };
   /** What's been added to this floor in build mode, and its moved desks. */
   furniture: FurnitureState = { items: [], desks: {} };
   /** What the lounge jukebox is playing; `since` is when the track started, on performance.now()'s clock. */
@@ -281,6 +283,7 @@ class Store {
         this.peers = new Map(msg.peers.map((p) => [p.id, p]));
         this.floors = msg.floors;
         this.assets = msg.assets ?? [];
+        this.lot = msg.lot ?? { items: [], desks: {} };
         this.projectsDir = msg.projectsDir;
         this.ice = msg.ice as RTCIceServer[];
         this.chat = msg.chat;
@@ -297,7 +300,7 @@ class Store {
         this.prompts = msg.prompts ?? { custom: {} };
         this.leaveOnMerge = msg.leaveOnMerge ?? { on: false };
         this.enter(msg);
-        for (const t of ['peers', 'chat', 'upgrade', 'usage', 'limits', 'me', 'notify', 'machine', 'floors', 'projectsDir', 'sky', 'theme', 'prompts', 'leaveOnMerge'] as Topic[]) this.emit(t);
+        for (const t of ['peers', 'chat', 'upgrade', 'usage', 'limits', 'me', 'notify', 'machine', 'floors', 'projectsDir', 'sky', 'theme', 'prompts', 'leaveOnMerge', 'assets', 'lot'] as Topic[]) this.emit(t);
         break;
       case 'floor.enter':
         this.peers = new Map(msg.peers.map((p) => [p.id, p]));
@@ -390,6 +393,10 @@ class Store {
       case 'assets':
         this.assets = msg.assets;
         this.emit('assets');
+        break;
+      case 'lot':
+        this.lot = msg.furniture;
+        this.emit('lot');
         break;
       case 'jukebox':
         this.setJukebox(msg.state);

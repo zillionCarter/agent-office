@@ -1,20 +1,25 @@
 import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { MAX_FURNITURE, MOVABLE_DESKS, cleanAngle, cleanFloorStyle, cleanPlacement, clampToFloor, type DeskPlacement, type FloorStyle, type FurnitureItem, type FurniturePlacement, type FurnitureState } from '../shared/furniture.js';
+import { MAX_FURNITURE, MOVABLE_DESKS, cleanAngle, cleanFloorStyle, cleanPlacement, clampToFloor, type Area, type DeskPlacement, type FloorStyle, type FurnitureItem, type FurniturePlacement, type FurnitureState } from '../shared/furniture.js';
+import { FLOOR } from '../shared/layout.js';
 
 /** A floor's furniture and moved desks (see shared/furniture.ts), in its .agent-office/furniture.json. */
 export class Furniture {
   private state: FurnitureState = { items: [], desks: {} };
   private file: string;
 
-  constructor(dataDir: string) {
+  constructor(
+    dataDir: string,
+    /** Where things can go: a floor's room, or the lot beside the building. */
+    private area: Area = FLOOR,
+  ) {
     this.file = path.join(dataDir, 'furniture.json');
     try {
       if (!existsSync(this.file)) return;
       const saved = JSON.parse(readFileSync(this.file, 'utf8')) as Partial<FurnitureState>;
       for (const it of Array.isArray(saved.items) ? saved.items : []) {
-        const p = cleanPlacement(it);
+        const p = cleanPlacement(it, area);
         if (typeof p === 'string' || typeof it.id !== 'string') continue;
         this.state.items.push({ ...p, id: it.id, by: typeof it.by === 'string' ? it.by : '?', at: typeof it.at === 'number' ? it.at : 0 });
       }
@@ -35,7 +40,7 @@ export class Furniture {
 
   add(input: Partial<FurniturePlacement>, by: string): FurnitureItem | string {
     if (this.state.items.length >= MAX_FURNITURE) return `This floor has as much as it can take (${MAX_FURNITURE} pieces)`;
-    const p = cleanPlacement(input);
+    const p = cleanPlacement(input, this.area);
     if (typeof p === 'string') return p;
     const item: FurnitureItem = { ...p, id: randomBytes(5).toString('hex'), by, at: Date.now() };
     this.state.items.push(item);
@@ -47,7 +52,7 @@ export class Furniture {
     const i = this.state.items.findIndex((it) => it.id === id);
     if (i < 0) return "That's not there any more";
     const was = this.state.items[i];
-    const p = cleanPlacement({ ...was, ...patch, kind: was.kind });
+    const p = cleanPlacement({ ...was, ...patch, kind: was.kind }, this.area);
     if (typeof p === 'string') return p;
     this.state.items[i] = { ...was, ...p };
     this.save();

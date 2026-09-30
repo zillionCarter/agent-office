@@ -157,12 +157,12 @@ export async function fillAsset(g: THREE.Group, p: Pick<FurniturePlacement, 'ass
   }
 }
 
-/** Turns a piece's footprint into colliders, as tall as it is. Rugs and doorways have none. */
-export function pieceColliders(p: FurniturePlacement): Collider[] {
+/** Turns a piece's footprint into colliders, as tall as it is, standing on `base`. Rugs and doorways have none. */
+export function pieceColliders(p: FurniturePlacement, base = 0): Collider[] {
   const def = FURNITURE[p.kind];
   if (def.walkThrough) return [];
   const tall = def.h > 1.6;
-  return footprint(p).map((b) => ({ ...b, top: def.h, ...(tall ? { fence: true } : {}) }));
+  return footprint(p).map((b) => ({ ...b, top: base + def.h, ...(base ? { bottom: base } : {}), ...(tall ? { fence: true } : {}) }));
 }
 
 /** Every piece on the floor you're on, kept in step with the server's list, and its moved desks. */
@@ -177,14 +177,30 @@ export class FurnitureView {
   /** Called when the desks on models change, so workers find their seats. */
   onDesks: (() => void) | null = null;
 
+  /** How high the ground it stands on is: the floor (0), or the street under it (the lot). */
+  private base = 0;
+  private last: FurnitureState | null = null;
+
   constructor(
     private colliders: Collider[],
     private office: Office,
     /** The building's library, for how each of your models is set up. */
     private assets: () => AssetInfo[],
+    /** The lot beside the building, down on the street: no desks to move, no desks or seats on its models. */
+    private lot = false,
   ) {}
 
+  /** The street is this far down from the floor you're on (the lot): everything moves down with it. */
+  setBase(y: number) {
+    if (y === this.base) return;
+    this.base = y;
+    this.group.position.y = y;
+    for (const id of [...this.pieces.keys()]) this.drop(id);
+    if (this.last) this.apply(this.last);
+  }
+
   apply(state: FurnitureState) {
+    this.last = state;
     const seen = new Set<string>();
     for (const it of state.items) {
       seen.add(it.id);
@@ -199,7 +215,7 @@ export class FurnitureView {
       const tag = () => obj.traverse((o) => (o.userData.furnitureId = it.id));
       tag();
       this.group.add(obj);
-      const cs = it.kind === 'asset' ? [] : pieceColliders(it);
+      const cs = it.kind === 'asset' ? [] : pieceColliders(it, this.base);
       this.colliders.push(...cs);
       const piece = { key, obj, colliders: cs };
       this.pieces.set(it.id, piece);
@@ -209,12 +225,13 @@ export class FurnitureView {
           if (!ok || this.pieces.get(it.id) !== piece) return;
           tag();
           if (!info?.solid) return;
-          piece.colliders = solidColliders(obj, 0);
+          piece.colliders = solidColliders(obj, this.base);
           this.colliders.push(...piece.colliders);
         });
       }
     }
     for (const id of [...this.pieces.keys()]) if (!seen.has(id)) this.drop(id);
+    if (this.lot) return;
     for (const id of MOVABLE_DESKS) this.office.moveDesk(id, state.desks[id]);
     this.placeSeats(state);
   }

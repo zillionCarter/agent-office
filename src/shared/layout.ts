@@ -220,6 +220,12 @@ export const BOOKSHELF = { x: -6.5, z: FLOOR.maxZ - 0.21, width: 1.7, depth: 0.4
 
 export const SPAWN = { x: 8, z: 7 } as const;
 
+/**
+ * The empty lot beside the building, to the east, down at street level: yours to build on in build
+ * mode (walk out of the exit door and round the front). It's the whole building's, not one floor's.
+ */
+export const LOT = { minX: 22, maxX: 43, minZ: -20, maxZ: 18 } as const;
+
 /** The gong: on the north wall just past the elevator from the PR board, facing into the room. It rings when a PR merges. */
 export const GONG = { x: 11.8, z: FLOOR.minZ + 0.75, width: 1.9, height: 2.45 } as const;
 

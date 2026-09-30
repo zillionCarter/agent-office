@@ -1122,11 +1122,11 @@ export type ClientMsg =
   /** Move, resize, re-frame or swap the image of a picture. */
   | { t: 'decor.update'; id: string; decor: Partial<DecorPlacement> }
   | { t: 'decor.remove'; id: string }
-  /** Build mode: add a piece of furniture (a wall, a couch…) to your floor. */
-  | { t: 'furn.add'; item: FurniturePlacement }
+  /** Build mode: add a piece of furniture (a wall, a couch…) to your floor, or with `lot` to the lot beside the building. */
+  | { t: 'furn.add'; item: FurniturePlacement; lot?: boolean }
   /** Build mode: move, turn, stretch or repaint one. */
-  | { t: 'furn.update'; id: string; item: Partial<FurniturePlacement> }
-  | { t: 'furn.remove'; id: string }
+  | { t: 'furn.update'; id: string; item: Partial<FurniturePlacement>; lot?: boolean }
+  | { t: 'furn.remove'; id: string; lot?: boolean }
   /** Build mode: lay a new floor on your floor, or put the office's back (null). */
   | { t: 'furn.floor'; floor: FloorStyle | null }
   /** Your own models and pictures: rename one, size it, set up its seats, desk or screen. */
@@ -1225,6 +1225,8 @@ export type ServerMsg =
       floors: FloorInfo[];
       /** Your own models and pictures, the building's library. */
       assets: AssetInfo[];
+      /** What's been built on the lot beside the building. */
+      lot: FurnitureState;
       /** Where new projects are cloned to, on the office's machine. */
       projectsDir: ProjectsDirState;
       ice: { urls: string | string[]; username?: string; credential?: string }[];
@@ -1302,6 +1304,8 @@ export type ServerMsg =
   | { t: 'decor'; items: Decoration[] }
   | { t: 'furniture'; furniture: FurnitureState }
   | { t: 'assets'; assets: AssetInfo[] }
+  /** What's been built on the lot beside the building: the same for everyone. */
+  | { t: 'lot'; furniture: FurnitureState }
   /** What the dog on your floor is up to now: sent at the start of each leg of its day. */
   | { t: 'dog'; dog: DogState }
   /** The basketball on your floor was picked up, thrown, or put back under the hoop. */

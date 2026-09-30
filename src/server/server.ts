@@ -1,7 +1,7 @@
 import http from 'node:http';
 import https from 'node:https';
 import { randomBytes } from 'node:crypto';
-import { createReadStream, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { Duplex } from 'node:stream';
 import { fileURLToPath } from 'node:url';
@@ -42,6 +42,8 @@ import { LOOK_KEYS, lookFromSeed, sanitizeLook } from '../shared/avatar.js';
 import { ROLE_BY_ID, isWorkerRole } from '../shared/roles.js';
 import { copyClaudeSession, listCowork } from './sessions.js';
 import { AssetLibrary } from './assets.js';
+import { Furniture } from './furniture.js';
+import { LOT_AREA } from '../shared/furniture.js';
 import { MAX_ASSET_BYTES } from '../shared/assets.js';
 import { loadMailConfig, mailPrompt, mailToken, mailbox, officeRecipients, sameToken, sendReply, senderFor, type Mail } from './mail.js';
 import { EMOTE_EVERY, EmoteBucket, isEmote } from '../shared/emotes.js';
@@ -255,6 +257,11 @@ export async function startServer(cfg: Config) {
   const building = new Building(cfg.dataDir, cfg.projectsDir);
   /** Your own models and pictures, for every floor (see assets.ts). */
   const assetLib = new AssetLibrary(cfg.dataDir);
+  /** The lot beside the building (LOT): the whole building's, kept in the office's own lot/ folder. */
+  const lotDir = path.join(cfg.dataDir, 'lot');
+  mkdirSync(lotDir, { recursive: true, mode: 0o700 });
+  const lot = new Furniture(lotDir, LOT_AREA);
+  const lotChanged = () => broadcast({ t: 'lot', furniture: lot.get() });
   if (cfg.projects) {
     const err = building.setProjectsDir(cfg.projects, 'the command line');
     if (err) console.error(`agent-office: --projects: ${err}`);
@@ -1131,6 +1138,7 @@ export async function startServer(cfg: Config) {
       peers: [...clients.values()].map((c) => c.peer),
       floors: floorInfos(),
       assets: assetLib.all(),
+      lot: lot.get(),
       projectsDir: building.projectsDirState(),
       ice: cfg.iceServers,
       chat: chat.recent(50),
@@ -2073,15 +2081,27 @@ export async function startServer(cfg: Config) {
         handleAccounts(c, msg);
         break;
       case 'furn.add': {
+        if (msg.item?.kind === 'asset' && assetLib.get(str(msg.item.asset, 20))?.type !== 'model') return warn(c, "That model isn't in the library any more");
+        if (msg.lot) {
+          const r = lot.add(msg.item ?? {}, who);
+          if (typeof r === 'string') return warn(c, r);
+          lotChanged();
+          break;
+        }
         const floor = here();
         if (!floor) break;
-        if (msg.item?.kind === 'asset' && assetLib.get(str(msg.item.asset, 20))?.type !== 'model') return warn(c, "That model isn't in the library any more");
         const r = floor.furniture.add(msg.item ?? {}, who);
         if (typeof r === 'string') return warn(c, r);
         furnitureChanged(floor);
         break;
       }
       case 'furn.update': {
+        if (msg.lot) {
+          const r = lot.update(str(msg.id, 20), msg.item ?? {});
+          if (typeof r === 'string') return warn(c, r);
+          lotChanged();
+          break;
+        }
         const floor = here();
         if (!floor) break;
         const r = floor.furniture.update(str(msg.id, 20), msg.item ?? {});
@@ -2090,6 +2110,10 @@ export async function startServer(cfg: Config) {
         break;
       }
       case 'furn.remove': {
+        if (msg.lot) {
+          if (lot.remove(str(msg.id, 20))) lotChanged();
+          break;
+        }
         const floor = here();
         if (!floor) break;
         if (floor.furniture.remove(str(msg.id, 20))) furnitureChanged(floor);
@@ -2114,6 +2138,7 @@ export async function startServer(cfg: Config) {
         const gone = assetLib.remove(str(msg.id, 20));
         if (!gone) break;
         for (const f of floors.values()) if (f.furniture.removeAsset(gone.id)) furnitureChanged(f);
+        if (lot.removeAsset(gone.id)) lotChanged();
         broadcast({ t: 'assets', assets: assetLib.all() });
         toastAll(`📦 ${who} took ${gone.name} out of the library`);
         break;

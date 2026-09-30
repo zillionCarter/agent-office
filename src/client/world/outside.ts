@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { FLOOR, ROAD, SLAB, STREET_Y, WALL_T } from '../../shared/layout';
+import { FLOOR, LOT, ROAD, SLAB, STREET_Y, WALL_T } from '../../shared/layout';
 import { CAR, supercar, type CarKind } from './cars';
 import type { Collider } from './office';
 import { mergeByMaterial, mesh, textPlane, toon, toonUnique } from './toon';
@@ -324,6 +324,41 @@ export function buildStreet(group: THREE.Group, colliders: Collider[], night: Ni
   const sideways = groundPlane(12, B.maxZ - B.minZ + 6, B.maxX + 6, G - 0.012, (B.minZ + B.maxZ) / 2 + 1, null, '#9a9ea8');
   group.add(sideways);
 
+  // The lot beside the building (LOT): cleared ground inside a low kerb, with a sign on the street side.
+  const L = LOT;
+  const dirt = canvasTexture(256, 256, (g) => {
+    g.fillStyle = '#c9b79c';
+    g.fillRect(0, 0, 256, 256);
+    let seed = 7;
+    const rand = () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
+    for (let i = 0; i < 1400; i++) {
+      g.fillStyle = rand() < 0.5 ? '#b8a585' : '#d8c8ad';
+      g.fillRect(rand() * 256, rand() * 256, 3, 3);
+    }
+  });
+  dirt.wrapS = dirt.wrapT = THREE.RepeatWrapping;
+  dirt.repeat.set((L.maxX - L.minX) / 6, (L.maxZ - L.minZ) / 6);
+  group.add(groundPlane(L.maxX - L.minX, L.maxZ - L.minZ, (L.minX + L.maxX) / 2, G - 0.006, (L.minZ + L.maxZ) / 2, dirt));
+  const kerb = toon('#e3ddd0');
+  const k = 0.25;
+  for (const [x, z, w, d] of [
+    [(L.minX + L.maxX) / 2, L.minZ, L.maxX - L.minX + k, k],
+    [(L.minX + L.maxX) / 2, L.maxZ, L.maxX - L.minX + k, k],
+    [L.minX, (L.minZ + L.maxZ) / 2, k, L.maxZ - L.minZ],
+    [L.maxX, (L.minZ + L.maxZ) / 2, k, L.maxZ - L.minZ],
+  ] as const) {
+    group.add(mesh(box(w, 0.12, d), kerb, x, G + 0.06, z));
+  }
+  const sign = new THREE.Group();
+  for (const sx of [-0.9, 0.9]) sign.add(mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.6, 8), toon('#8d99ae'), sx, 0.8, 0));
+  sign.add(mesh(box(2.3, 0.9, 0.08), toon('#2b2d42'), 0, 1.5, 0));
+  const words = textPlane('🏗️ Your lot · build here', { bg: '#2b2d42', color: '#fffaf3', size: 44 });
+  words.scale.multiplyScalar(0.4);
+  words.position.set(0, 1.5, 0.05);
+  sign.add(words);
+  sign.position.set(L.minX + 3, G, L.maxZ - 0.6);
+  group.add(sign);
+
   // The road: asphalt, white edge lines and a dashed yellow middle.
   const road = canvasTexture(256, 128, (g) => {
     g.fillStyle = '#5b606c';
@@ -358,8 +393,9 @@ export function buildStreet(group: THREE.Group, colliders: Collider[], night: Ni
     [-27, -8, 1.2],
     [-29, 4, 1],
     [-26, 14, 0.9],
-    [29, -6, 1.1],
-    [30, 6, 1.25],
+    // (Clear of the lot beside the building, which is yours to build on.)
+    [46, -22, 1.1],
+    [46, 21, 1.25],
     [-12, -22, 1.2],
     [4, -24, 1],
     [18, -21, 1.1],
