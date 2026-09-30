@@ -46,6 +46,8 @@ export interface Interactable {
   seatId?: string;
   /** A screen on one of your models: the model's id (see world/screens.ts). */
   screenId?: string;
+  /** Every seat on one of your models: looking at the model and pressing E sits you on the nearest free one. */
+  seatIds?: string[];
   /** Which of POLES, for a fire pole. */
   pole?: number;
   /** Put away for now (a bean bag nobody needs yet): can't be used. */

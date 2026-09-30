@@ -1848,6 +1848,7 @@ function interact(target: Interactable | null, key: DeskKey, note = aimedNote) {
   else if (target.kind === 'bookshelf') showBookshelf();
   else if (target.kind === 'screen' && target.screenId) useScreen(target.screenId);
   else if (target.kind === 'decor' && target.decorId) hanger.view(target.decorId);
+  else if (target.kind === 'seat' && target.seatIds?.length) useSeat(nearestFreeSeat(target.seatIds) ?? target.seatIds[0]);
   else if (target.kind === 'seat' && target.seatId) useSeat(target.seatId);
   else if (target.kind === 'dog') net.send({ t: 'dog.pet' });
   else if (target.kind === 'coffee') drinkCoffee();
@@ -2315,6 +2316,24 @@ function tvShowing(): boolean {
 }
 
 /** E at a seat: sit down on it. Sitting there already, get up, or on the couch facing the TV, watch it. */
+/** Of a model's seats, the nearest one with room on it (or the one you're on). */
+function nearestFreeSeat(ids: string[]): string | undefined {
+  let best: string | undefined;
+  let bestD = Infinity;
+  for (const id of ids) {
+    const seat = SEATING_BY_ID.get(id);
+    if (!seat) continue;
+    if (player.seat?.seatId === id) return id;
+    if (!freePlace(seat)) continue;
+    const d = Math.hypot(seat.x - player.pos.x, seat.z - player.pos.z);
+    if (d < bestD) {
+      best = id;
+      bestD = d;
+    }
+  }
+  return best;
+}
+
 function useSeat(seatId: string) {
   const seat = SEATING_BY_ID.get(seatId);
   if (!seat) return;
@@ -2439,13 +2458,14 @@ let target: Interactable | null = null;
 let hintKey = '';
 
 function pickTarget(): Interactable | null {
-  // Everything you can use is upstairs; down on the street you're under it all.
-  if (player.pos.y < -SLAB - 1) return null;
+  // Everything you can use is upstairs, but for what's out on the lot, down on the street.
+  const street = player.pos.y < -SLAB - 1;
   let best: Interactable | null = null;
   let bestD = Infinity;
   for (const list of usable()) {
     for (const it of list) {
       if (it.off) continue;
+      if (street && it.y === undefined) continue;
       // Up on the loft, or down underneath it.
       if (Math.abs((it.y ?? 0) - player.pos.y) > 1.5) continue;
       const d = Math.hypot(it.x - player.pos.x, it.z - player.pos.z);

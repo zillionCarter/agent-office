@@ -259,6 +259,8 @@ export class FurnitureView {
           // Changed or taken away while it loaded: whatever replaced it has its own.
           if (!ok || this.pieces.get(it.id) !== piece) return;
           tag();
+          // A desk's laptop goes on the model once it's in, and E on the model works from now on.
+          if (this.last) this.placeSeats(this.lot && !this.active ? { items: [], desks: {} } : this.last);
           if (!info?.solid) return;
           piece.colliders = solidColliders(obj, this.base);
           this.colliders.push(...piece.colliders);
@@ -320,7 +322,23 @@ export class FurnitureView {
       this.office.interactables.push(it);
       this.modelSeats.set(s.id, { key: seatKeys.get(s.id)!, it });
     }
+    this.tagPieces(desks, seats.map((s) => s.id));
     if (changed) this.onDesks?.();
+  }
+
+  /**
+   * What looking at a piece and pressing E does: its desk (hire a worker there, or open theirs), else
+   * its seats (sit on the nearest free one). Aiming finds it on the piece, not only on the desk's marker.
+   */
+  private tagPieces(desks: PlacedDesk[], seatIds: string[]) {
+    for (const [id, piece] of this.pieces) {
+      const desk = desks.find((d) => d.item === id);
+      const seats = seatIds.filter((s) => s.startsWith(`m-${id}-`));
+      const deskIt = desk ? this.office.desks.get(desk.id)?.group.userData.interact : undefined;
+      const seatIt = seats.length ? this.modelSeats.get(seats[0])?.it : undefined;
+      if (seatIt) seatIt.seatIds = seats;
+      piece.obj.userData.interact = deskIt ?? seatIt;
+    }
   }
 
   /** Once a desk's model is in, its laptop goes on the model's surface in front of the worker. */
