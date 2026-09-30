@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { MAX_FURNITURE, MOVABLE_DESKS, cleanAngle, cleanPlacement, clampToFloor, type DeskPlacement, type FurnitureItem, type FurniturePlacement, type FurnitureState } from '../shared/furniture.js';
+import { MAX_FURNITURE, MOVABLE_DESKS, cleanAngle, cleanFloorStyle, cleanPlacement, clampToFloor, type DeskPlacement, type FloorStyle, type FurnitureItem, type FurniturePlacement, type FurnitureState } from '../shared/furniture.js';
 
 /** A floor's furniture and moved desks (see shared/furniture.ts), in its .agent-office/furniture.json. */
 export class Furniture {
@@ -22,6 +22,8 @@ export class Furniture {
         const place = cleanDesk(d);
         if (MOVABLE_DESKS.has(id) && place) this.state.desks[id] = place;
       }
+      const floor = cleanFloorStyle(saved.floor);
+      if (floor) this.state.floor = floor;
     } catch (err) {
       console.error(`agent-office: ${this.file} couldn't be read, so the floor starts without its furniture: ${(err as Error).message}`);
     }
@@ -58,6 +60,27 @@ export class Furniture {
     const [gone] = this.state.items.splice(i, 1);
     this.save();
     return gone;
+  }
+
+  /** Lays a new floor, or puts the office's back (null). */
+  setFloor(f: Partial<FloorStyle> | null): string | undefined {
+    if (f === null) delete this.state.floor;
+    else {
+      const clean = cleanFloorStyle(f);
+      if (!clean) return 'Pick a floor, or a picture for it';
+      this.state.floor = clean;
+    }
+    this.save();
+    return undefined;
+  }
+
+  /** Takes away every piece of one of your models, when it leaves the library. Returns whether any went. */
+  removeAsset(asset: string): boolean {
+    const before = this.state.items.length;
+    this.state.items = this.state.items.filter((it) => it.asset !== asset);
+    if (this.state.items.length === before) return false;
+    this.save();
+    return true;
   }
 
   /** Moves a desk, or puts it back where the office puts it (null). */

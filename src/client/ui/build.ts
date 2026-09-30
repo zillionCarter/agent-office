@@ -1,5 +1,8 @@
 import * as THREE from 'three';
-import { FURNITURE, FURNITURE_COLORS, FURNITURE_KINDS, MAX_LENGTH, MIN_LENGTH, MOVABLE_DESKS, clampToFloor, cleanAngle, widthOf, type FurnitureItem, type FurnitureKind, type FurniturePlacement } from '../../shared/furniture';
+import { FLOOR_STYLES, FURNITURE, FURNITURE_COLORS, FURNITURE_KINDS, MAX_LENGTH, MIN_LENGTH, MOVABLE_DESKS, clampToFloor, cleanAngle, widthOf, type FurnitureItem, type FurnitureKind, type FurniturePlacement } from '../../shared/furniture';
+import { MAX_SCALE, MIN_SCALE, type AssetInfo } from '../../shared/assets';
+import { fillAsset } from '../world/furniture';
+import { openAssetSetup, openLibrary } from './assets';
 import { DESK_BY_ID, FLOOR } from '../../shared/layout';
 import type { Net } from '../net';
 import { store } from '../state';
@@ -20,7 +23,7 @@ const SNAP = 0.25;
 const REACH = 14;
 
 type Selection = { type: 'item'; id: string } | { type: 'desk'; id: string };
-type Holding = { kind: FurnitureKind; rotY: number; length?: number; color?: string; text?: string; moving?: Selection };
+type Holding = { kind: FurnitureKind; rotY: number; length?: number; color?: string; text?: string; asset?: string; scale?: number; moving?: Selection };
 
 export interface BuildOptions {
   net: Net;
@@ -73,6 +76,8 @@ export class BuildMode {
     });
     o.canvas.addEventListener('contextmenu', (e) => this.active && e.preventDefault());
     store.on('furniture', () => this.active && this.refreshSelection());
+    // New models in the library, a new floor laid: the open catalog shows them.
+    for (const t of ['assets', 'furniture'] as const) store.on(t, () => this.catalogOpen && this.paintCatalog());
   }
 
   toggle() {
@@ -130,7 +135,7 @@ export class BuildMode {
       if (p.moving?.type === 'item') this.o.net.send({ t: 'furn.update', id: p.moving.id, item: { x, z, rotY: p.rotY } });
       else if (p.moving?.type === 'desk') this.o.net.send({ t: 'furn.desk', deskId: p.moving.id, place: { x, z, rotY: p.rotY } });
       else {
-        const item: FurniturePlacement = { kind: p.kind, x, z, rotY: p.rotY, length: p.length, color: p.color, text: p.text };
+        const item: FurniturePlacement = { kind: p.kind, x, z, rotY: p.rotY, length: p.length, color: p.color, text: p.text, asset: p.asset, scale: p.scale };
         this.o.net.send({ t: 'furn.add', item });
         // Keep putting down more of the same (a run of walls), until right-click, Esc or another pick.
         return;
@@ -215,8 +220,50 @@ export class BuildMode {
     const signIn = h('input', { type: 'text', value: this.signText, maxlength: 40, placeholder: 'Sign text', 'aria-label': 'Text for new signs' }) as HTMLInputElement;
     signIn.addEventListener('input', () => (this.signText = signIn.value || 'Office'));
     signIn.addEventListener('keydown', (e) => e.stopPropagation());
+    const models = store.assets.filter((a) => a.type === 'model');
+    const manage = h('button.btn', { type: 'button', title: 'Upload models and pictures, and set them up' }, '📦 Upload & set up…');
+    manage.addEventListener('click', () => {
+      this.closeCatalog();
+      openLibrary({ net: this.o.net, hold: (a) => this.holdAsset(a) });
+    });
+    const floor = store.furniture.floor;
+    const floorBtns = FLOOR_STYLES.filter((f) => f.style !== 'image').map((f) => {
+      const b = h('button.build-item', { type: 'button', class: floor?.style === f.style ? 'on' : '', title: `Lay ${f.label.toLowerCase()} on this floor` }, h('span.build-swatch', { style: `background:${floor?.style === f.style && floor.color ? floor.color : f.color}` }), f.label);
+      b.addEventListener('click', () => this.o.net.send({ t: 'furn.floor', floor: { style: f.style, color: floor?.style === f.style ? floor.color : undefined } }));
+      return b;
+    });
+    const floorColors = floor && floor.style !== 'image'
+      ? h(
+          'div.build-colors',
+          {},
+          ...FURNITURE_COLORS.map((c) => {
+            const sw = h('button.swatch', { type: 'button', style: `background:${c}`, class: floor.color === c ? 'sel' : '', 'aria-label': `Floor color ${c}`, title: c });
+            sw.addEventListener('click', () => this.o.net.send({ t: 'furn.floor', floor: { style: floor.style, color: c } }));
+            return sw;
+          }),
+        )
+      : null;
+    const pictures = store.assets.filter((a) => a.type === 'image');
+    const picBtns = pictures.map((a) => {
+      const b = h('button.build-item', { type: 'button', class: floor?.image === a.id ? 'on' : '', title: `Lay ${a.name} as the floor` }, h('span', {}, '🖼️'), a.name);
+      b.addEventListener('click', () => this.o.net.send({ t: 'furn.floor', floor: { style: 'image', image: a.id, tile: 2 } }));
+      return b;
+    });
+    const planks = h('button.btn', { type: 'button', title: 'The office’s own floor back' }, '↩︎ Office floor');
+    planks.addEventListener('click', () => this.o.net.send({ t: 'furn.floor', floor: null }));
     this.catalog.replaceChildren(
       h('h3', {}, '🛠️ Catalog'),
+      h('div.build-group', {}, 'Your models'),
+      h(
+        'div.build-items',
+        {},
+        ...models.map((a) => {
+          const b = h('button.build-item', { type: 'button', title: `Hold ${a.name} to put down` }, h('span', {}, a.desk ? '🖥️' : a.screen ? '📺' : a.seats.length ? '🛋️' : '📦'), a.name);
+          b.addEventListener('click', () => this.holdAsset(a));
+          return b;
+        }),
+      ),
+      manage,
       ...groups.flatMap((g) => [
         h('div.build-group', {}, g),
         h(
@@ -232,6 +279,10 @@ export class BuildMode {
       ]),
       h('div.build-group', {}, 'Sign text'),
       signIn,
+      h('div.build-group', {}, 'Floor'),
+      h('div.build-items', {}, ...floorBtns, ...picBtns),
+      ...(floorColors ? [floorColors] : []),
+      planks,
       h('div.build-foot', {}, close, done),
     );
   }
@@ -242,6 +293,16 @@ export class BuildMode {
     this.cancel();
     const def = FURNITURE[kind];
     this.holding = { kind, rotY: 0, length: def.stretch ? def.w : undefined, color: def.colored ? def.color : undefined, text: kind === 'sign' ? this.signText : undefined };
+    this.makeGhost();
+  }
+
+  /** Puts one of your models in your hands, at the size it's set up to go down at. */
+  holdAsset(a: AssetInfo) {
+    if (!this.active) this.start();
+    this.closeCatalog();
+    this.select(null);
+    this.cancel();
+    this.holding = { kind: 'asset', rotY: 0, asset: a.id, scale: a.scale };
     this.makeGhost();
   }
 
@@ -260,17 +321,28 @@ export class BuildMode {
       g.rotation.set(0, 0, 0);
       g.traverse((obj) => (obj.visible = true));
     } else g = buildPiece(p);
-    g.traverse((obj) => {
-      const m = obj as THREE.Mesh;
-      if (!m.isMesh) return;
-      const mat = (Array.isArray(m.material) ? m.material[0] : m.material).clone() as THREE.MeshToonMaterial;
-      mat.transparent = true;
-      mat.opacity = Math.min(mat.opacity, 0.55);
-      mat.depthWrite = false;
-      m.material = mat;
-      m.castShadow = false;
-      m.raycast = () => {};
-    });
+    const seeThrough = (root: THREE.Object3D) =>
+      root.traverse((obj) => {
+        const m = obj as THREE.Mesh;
+        if (!m.isMesh || m.userData.ghosted) return;
+        m.userData.ghosted = true;
+        const mats = (Array.isArray(m.material) ? m.material : [m.material]).map((mm) => {
+          const mat = mm.clone();
+          mat.transparent = true;
+          mat.opacity = Math.min(mat.opacity, 0.55);
+          mat.depthWrite = false;
+          return mat;
+        });
+        m.material = Array.isArray(m.material) ? mats : mats[0];
+        m.castShadow = false;
+        m.raycast = () => {};
+      });
+    seeThrough(g);
+    if (p.kind === 'asset' && !p.moving?.type?.startsWith('desk')) {
+      void fillAsset(g, p).then(() => {
+        if (this.ghost === g) seeThrough(g);
+      });
+    }
     this.ghost = g;
     this.o.scene.add(g);
     this.placeGhost();
@@ -281,7 +353,7 @@ export class BuildMode {
     this.o.scene.remove(this.ghost);
     this.ghost.traverse((obj) => {
       const m = obj as THREE.Mesh;
-      if (m.isMesh) (m.material as THREE.Material).dispose();
+      if (m.isMesh && m.userData.ghosted) for (const mat of Array.isArray(m.material) ? m.material : [m.material]) mat.dispose();
     });
     this.ghost = null;
   }
@@ -373,7 +445,7 @@ export class BuildMode {
     if (s.type === 'item') {
       const it = this.item(s.id);
       if (!it) return;
-      this.holding = { kind: it.kind, rotY: it.rotY, length: it.length, color: it.color, text: it.text, moving: s };
+      this.holding = { kind: it.kind, rotY: it.rotY, length: it.length, color: it.color, text: it.text, asset: it.asset, scale: it.scale, moving: s };
       this.o.furniture.hide(s.id, true);
     } else {
       const def = DESK_BY_ID.get(s.id);
@@ -415,6 +487,17 @@ export class BuildMode {
   }
 
   private stretch(by: number) {
+    // Your own models get bigger and smaller instead.
+    const grow = (s: number | undefined) => Math.round(Math.min(MAX_SCALE, Math.max(MIN_SCALE, (s ?? 1) * (by > 0 ? 1.1 : 1 / 1.1))) * 1000) / 1000;
+    if (this.holding?.kind === 'asset' && !this.holding.moving) {
+      this.holding.scale = grow(this.holding.scale);
+      this.makeGhost();
+      return;
+    }
+    if (this.selected?.type === 'item') {
+      const it = this.item(this.selected.id);
+      if (it?.kind === 'asset') return void this.o.net.send({ t: 'furn.update', id: it.id, item: { scale: grow(it.scale) } });
+    }
     if (this.holding) {
       if (!FURNITURE[this.holding.kind].stretch || this.holding.moving?.type === 'desk') return;
       this.holding.length = Math.min(MAX_LENGTH, Math.max(MIN_LENGTH, (this.holding.length ?? FURNITURE[this.holding.kind].w) + by));

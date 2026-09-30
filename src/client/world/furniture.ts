@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { FURNITURE, MOVABLE_DESKS, footprint, widthOf, type FurniturePlacement, type FurnitureState } from '../../shared/furniture';
 import { mesh, roundedBox, textPlane, toon } from './toon';
 import { plant, type Collider, type Office } from './office';
+import { modelInstance, solidColliders } from './assets';
+import type { AssetInfo } from '../../shared/assets';
 
 // What people add to a floor in build mode (see shared/furniture.ts), built in the office: walls and
 // glass to make offices, dividers, couches, plants… Each piece is its own group, its footprint turned
@@ -10,7 +12,7 @@ import { plant, type Collider, type Office } from './office';
 const box = (w: number, h: number, d: number) => new THREE.BoxGeometry(w, h, d);
 
 /** A piece of furniture as it looks, centered on (0, 0, 0) with its width along x (as placed, before turning). */
-export function buildPiece(p: Pick<FurniturePlacement, 'kind' | 'length' | 'color' | 'text'>): THREE.Group {
+export function buildPiece(p: Pick<FurniturePlacement, 'kind' | 'length' | 'color' | 'text' | 'scale'>): THREE.Group {
   const def = FURNITURE[p.kind];
   const g = new THREE.Group();
   const w = widthOf(p);
@@ -111,6 +113,14 @@ export function buildPiece(p: Pick<FurniturePlacement, 'kind' | 'length' | 'colo
       g.add(mesh(roundedBox(w, 0.02, d, 0.3), main, 0, 0.012, 0, false));
       g.add(mesh(roundedBox(w - 0.3, 0.021, d - 0.3, 0.2), toon(new THREE.Color(color).lerp(new THREE.Color('#ffffff'), 0.3)), 0, 0.013, 0, false));
       break;
+    case 'asset': {
+      // A stand-in while the model loads (see FurnitureView, and fillAsset for a ghost).
+      const wait = new THREE.MeshBasicMaterial({ color: '#8ecae6', transparent: true, opacity: 0.35, depthWrite: false });
+      const s = p.scale ?? 1;
+      g.add(new THREE.Mesh(new THREE.BoxGeometry(s, s, s).translate(0, s / 2, 0), wait));
+      g.userData.placeholder = g.children[0];
+      break;
+    }
     case 'sign': {
       g.add(mesh(new THREE.CylinderGeometry(0.03, 0.03, h - 0.4, 8), toon('#8d99ae'), 0, (h - 0.4) / 2, 0));
       g.add(mesh(new THREE.CylinderGeometry(0.2, 0.22, 0.04, 16), toon('#8d99ae'), 0, 0.02, 0));
@@ -129,6 +139,21 @@ export function buildPiece(p: Pick<FurniturePlacement, 'kind' | 'length' | 'colo
   return g;
 }
 
+/** Swaps a model's stand-in (see buildPiece) for the model itself once it's loaded. Resolves to whether it did. */
+export async function fillAsset(g: THREE.Group, p: Pick<FurniturePlacement, 'asset' | 'scale'>): Promise<boolean> {
+  if (!p.asset) return false;
+  try {
+    const model = await modelInstance(p.asset);
+    model.scale.setScalar(p.scale ?? 1);
+    const stand = g.userData.placeholder as THREE.Object3D | undefined;
+    if (stand) g.remove(stand);
+    g.add(model);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Turns a piece's footprint into colliders, as tall as it is. Rugs and doorways have none. */
 export function pieceColliders(p: FurniturePlacement): Collider[] {
   const def = FURNITURE[p.kind];
@@ -145,25 +170,39 @@ export class FurnitureView {
   constructor(
     private colliders: Collider[],
     private office: Office,
+    /** The building's library, for how each of your models is set up. */
+    private assets: () => AssetInfo[],
   ) {}
 
   apply(state: FurnitureState) {
     const seen = new Set<string>();
     for (const it of state.items) {
       seen.add(it.id);
-      const key = JSON.stringify([it.kind, it.x, it.z, it.rotY, it.length, it.color, it.text]);
+      const info = it.asset ? this.assets().find((a) => a.id === it.asset) : undefined;
+      const key = JSON.stringify([it.kind, it.x, it.z, it.rotY, it.length, it.color, it.text, it.asset, it.scale, info?.solid]);
       const had = this.pieces.get(it.id);
       if (had?.key === key) continue;
       if (had) this.drop(it.id);
       const obj = buildPiece(it);
       obj.position.set(it.x, 0, it.z);
       obj.rotation.y = it.rotY;
-      obj.userData.furnitureId = it.id;
-      obj.traverse((o) => (o.userData.furnitureId = it.id));
+      const tag = () => obj.traverse((o) => (o.userData.furnitureId = it.id));
+      tag();
       this.group.add(obj);
-      const cs = pieceColliders(it);
+      const cs = it.kind === 'asset' ? [] : pieceColliders(it);
       this.colliders.push(...cs);
-      this.pieces.set(it.id, { key, obj, colliders: cs });
+      const piece = { key, obj, colliders: cs };
+      this.pieces.set(it.id, piece);
+      if (it.kind === 'asset') {
+        void fillAsset(obj, it).then((ok) => {
+          // Changed or taken away while it loaded: whatever replaced it has its own.
+          if (!ok || this.pieces.get(it.id) !== piece) return;
+          tag();
+          if (!info?.solid) return;
+          piece.colliders = solidColliders(obj, 0);
+          this.colliders.push(...piece.colliders);
+        });
+      }
     }
     for (const id of [...this.pieces.keys()]) if (!seen.has(id)) this.drop(id);
     for (const id of MOVABLE_DESKS) this.office.moveDesk(id, state.desks[id]);

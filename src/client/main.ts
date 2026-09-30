@@ -62,6 +62,7 @@ import { hiringPaused, renderUsage, usageLabel, usageTitle } from './ui/usage';
 import { elevatorPanelOpen, openElevator, routeElevatorMessage } from './ui/elevator';
 import { openMail, routeMailMessage } from './ui/mail';
 import { BuildMode } from './ui/build';
+import { openLibrary } from './ui/assets';
 import { FurnitureView } from './world/furniture';
 import { openWorkerLook } from './ui/workerlook';
 import { cantMove, openCoworkPicker, openMoveFloor, routeCoworkMessage } from './ui/cowork';
@@ -300,9 +301,33 @@ const player = new PlayerController(camera, canvas, office.colliders);
 /** Where you aim in first person: the middle of the screen. */
 const BUILD_CENTER = new THREE.Vector2(0, 0);
 // What's been added to the floor in build mode, and its moved desks (see world/furniture.ts).
-const furniture = new FurnitureView(office.colliders, office);
+const furniture = new FurnitureView(office.colliders, office, () => store.assets);
 office.group.add(furniture.group);
 store.on('furniture', () => furniture.apply(store.furniture));
+// The floor's own flooring, laid in build mode: a style, or one of your pictures (loaded once).
+const floorPictures = new Map<string, Promise<HTMLImageElement>>();
+const layFloor = () => {
+  const f = store.furniture.floor;
+  if (!f) return office.setFlooring();
+  if (f.style !== 'image' || !f.image) return office.setFlooring(f);
+  const id = f.image;
+  let pic = floorPictures.get(id);
+  if (!pic) {
+    pic = new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error('no picture'));
+      img.src = `/api/assets/file?id=${encodeURIComponent(id)}`;
+    });
+    floorPictures.set(id, pic);
+  }
+  void pic.then((img) => {
+    if (store.furniture.floor?.image === id) office.setFlooring(f, img);
+  }, () => office.setFlooring());
+};
+store.on('furniture', layFloor);
+// A model set up anew (made solid, say) is put in again.
+store.on('assets', () => furniture.apply(store.furniture));
 // Changing floors (or going up to the roof) leaves build mode.
 store.on('floor', () => build.stop());
 const build = new BuildMode({
@@ -3146,6 +3171,7 @@ const hud = mountHud(
     { id: 'services', icon: '🌐', label: 'Services', section: 'Open', count: () => store.services.items.length, title: () => 'Web servers the workers are running', run: () => openServices() },
     { id: 'whiteboard', icon: '📝', label: 'Whiteboard', section: 'Open', title: () => 'Draw together, live', run: () => openWhiteboard(net) },
     { id: 'build', icon: '🛠️', label: 'Build mode', section: 'Open', key: 'K', shown: () => !upTop && !!store.floor, title: () => 'Add walls, offices and furniture, and move the desks', run: () => build.start() },
+    { id: 'models', icon: '📦', label: 'Your models', section: 'Open', title: () => 'Upload your own 3D models and pictures, and set them up', run: () => openLibrary({ net, hold: (a) => build.holdAsset(a) }) },
     { id: 'mail', icon: '📬', label: 'Front desk mail', section: 'Open', title: () => 'The email that came in for reception, and the replies', run: () => openMail(net) },
     // Up on the top bar while a meeting is on: what's being worked through in the meeting room.
     {

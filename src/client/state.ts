@@ -3,13 +3,14 @@ import type { ScreenState } from './world/laptop';
 import { randomLook, sanitizeLook, type Look } from '../shared/avatar';
 import type { Decoration } from '../shared/decor';
 import type { FurnitureState } from '../shared/furniture';
+import type { AssetInfo } from '../shared/assets';
 import { newer, type WbElement } from '../shared/whiteboard';
 import type { DogState } from '../shared/dog';
 import { JUKEBOX_TUNES, type JukeboxState } from '../shared/jukebox';
 import type { CabinetFrame, CabinetState } from '../shared/cabinet';
 import type { BallState } from '../shared/hoop';
 
-export type Topic = 'peers' | 'workers' | 'issues' | 'pulls' | 'chat' | 'project' | 'screens' | 'team' | 'upgrade' | 'services' | 'decor' | 'usage' | 'limits' | 'queue' | 'me' | 'accounts' | 'notify' | 'machine' | 'floors' | 'floor' | 'projectsDir' | 'repos' | 'dog' | 'jukebox' | 'sky' | 'theme' | 'leaveOnMerge' | 'whiteboard' | 'drawing' | 'cabinet' | 'cabinetFrame' | 'meeting' | 'prompts' | 'ball' | 'furniture';
+export type Topic = 'peers' | 'workers' | 'issues' | 'pulls' | 'chat' | 'project' | 'screens' | 'team' | 'upgrade' | 'services' | 'decor' | 'usage' | 'limits' | 'queue' | 'me' | 'accounts' | 'notify' | 'machine' | 'floors' | 'floor' | 'projectsDir' | 'repos' | 'dog' | 'jukebox' | 'sky' | 'theme' | 'leaveOnMerge' | 'whiteboard' | 'drawing' | 'cabinet' | 'cabinetFrame' | 'meeting' | 'prompts' | 'ball' | 'furniture' | 'assets';
 
 const zeroUsage = (): Usage => ({ input: 0, output: 0, cacheWrite: 0, cacheRead: 0, cost: 0, calls: 0 });
 
@@ -146,6 +147,8 @@ class Store {
   services: ServicesState = { items: [], port: 4600 };
   /** Pictures on the walls. */
   decor: Decoration[] = [];
+  /** Your own models and pictures: the building's library (see shared/assets.ts). */
+  assets: AssetInfo[] = [];
   /** What's been added to this floor in build mode, and its moved desks. */
   furniture: FurnitureState = { items: [], desks: {} };
   /** What the lounge jukebox is playing; `since` is when the track started, on performance.now()'s clock. */
@@ -277,6 +280,7 @@ class Store {
         this.you = msg.you;
         this.peers = new Map(msg.peers.map((p) => [p.id, p]));
         this.floors = msg.floors;
+        this.assets = msg.assets ?? [];
         this.projectsDir = msg.projectsDir;
         this.ice = msg.ice as RTCIceServer[];
         this.chat = msg.chat;
@@ -382,6 +386,10 @@ class Store {
       case 'furniture':
         this.furniture = msg.furniture;
         this.emit('furniture');
+        break;
+      case 'assets':
+        this.assets = msg.assets;
+        this.emit('assets');
         break;
       case 'jukebox':
         this.setJukebox(msg.state);

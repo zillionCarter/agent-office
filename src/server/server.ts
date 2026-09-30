@@ -41,6 +41,8 @@ import { MAX_FLOORS } from '../shared/floors.js';
 import { LOOK_KEYS, lookFromSeed, sanitizeLook } from '../shared/avatar.js';
 import { ROLE_BY_ID, isWorkerRole } from '../shared/roles.js';
 import { copyClaudeSession, listCowork } from './sessions.js';
+import { AssetLibrary } from './assets.js';
+import { MAX_ASSET_BYTES } from '../shared/assets.js';
 import { loadMailConfig, mailPrompt, mailToken, mailbox, officeRecipients, sameToken, sendReply, senderFor, type Mail } from './mail.js';
 import { EMOTE_EVERY, EmoteBucket, isEmote } from '../shared/emotes.js';
 import { isThemePick } from '../shared/theme.js';
@@ -144,6 +146,35 @@ function readBody(req: http.IncomingMessage, limit = 1024 * 1024): Promise<strin
   });
 }
 
+/** The request's body as it came, up to `limit` bytes. */
+function readBuffer(req: http.IncomingMessage, limit: number): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks: Buffer[] = [];
+    req.on('data', (c: Buffer) => {
+      size += c.length;
+      if (size > limit) {
+        reject(new Error('too large'));
+        req.destroy();
+      } else chunks.push(c);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+
+/** One of the library's files, which never change once they're in (a new upload is a new id). */
+function serveAsset(res: http.ServerResponse, file: string, mime: string) {
+  let size: number;
+  try {
+    size = statSync(file).size;
+  } catch {
+    return send(res, 404, { error: 'No such asset' });
+  }
+  res.writeHead(200, { 'content-type': mime, 'content-length': String(size), 'cache-control': 'private, max-age=31536000, immutable', 'x-content-type-options': 'nosniff' });
+  createReadStream(file).pipe(res);
+}
+
 /** Whether the page asking is the office itself, so another site can't open a socket with a visitor's cookie. */
 function sameOrigin(req: http.IncomingMessage, cfg: Config): boolean {
   const origin = req.headers.origin;
@@ -222,6 +253,8 @@ export async function startServer(cfg: Config) {
 
   // --- The building: a floor per project, each with its own workers, boards and queue -----------
   const building = new Building(cfg.dataDir, cfg.projectsDir);
+  /** Your own models and pictures, for every floor (see assets.ts). */
+  const assetLib = new AssetLibrary(cfg.dataDir);
   if (cfg.projects) {
     const err = building.setProjectsDir(cfg.projects, 'the command line');
     if (err) console.error(`agent-office: --projects: ${err}`);
@@ -857,6 +890,26 @@ export async function startServer(cfg: Config) {
         res.end(r.body);
         return;
       }
+      if (p === '/api/assets/file' && req.method === 'GET') {
+        const a = assetLib.get(url.searchParams.get('id') ?? '');
+        if (!a) return send(res, 404, { error: 'No such asset' });
+        return serveAsset(res, assetLib.path(a), assetLib.mime(a));
+      }
+      if (p === '/api/assets' && req.method === 'POST') {
+        // A model or a picture for the library, as the file itself.
+        if (!sameOrigin(req, cfg)) return send(res, 403, { error: 'Forbidden' });
+        let buf: Buffer;
+        try {
+          buf = await readBuffer(req, MAX_ASSET_BYTES);
+        } catch (err) {
+          return send(res, (err as Error).message === 'too large' ? 413 : 400, { error: (err as Error).message === 'too large' ? 'That file is too big (60 MB at most)' : 'Bad request' });
+        }
+        const who = session.account?.name || 'Someone';
+        const r = assetLib.add(buf, str(url.searchParams.get('name'), 200), who);
+        if (typeof r === 'string') return send(res, 400, { error: r });
+        broadcast({ t: 'assets', assets: assetLib.all() });
+        return send(res, 200, { ok: true, asset: r });
+      }
       // Which floor a request is about: its boards and its workers.
       const floor = floors.get(url.searchParams.get('floor') ?? '');
       if (p === '/api/whiteboard/file') {
@@ -1076,6 +1129,7 @@ export async function startServer(cfg: Config) {
       you: id,
       peers: [...clients.values()].map((c) => c.peer),
       floors: floorInfos(),
+      assets: assetLib.all(),
       projectsDir: building.projectsDirState(),
       ice: cfg.iceServers,
       chat: chat.recent(50),
@@ -2014,6 +2068,7 @@ export async function startServer(cfg: Config) {
       case 'furn.add': {
         const floor = here();
         if (!floor) break;
+        if (msg.item?.kind === 'asset' && assetLib.get(str(msg.item.asset, 20))?.type !== 'model') return warn(c, "That model isn't in the library any more");
         const r = floor.furniture.add(msg.item ?? {}, who);
         if (typeof r === 'string') return warn(c, r);
         furnitureChanged(floor);
@@ -2031,6 +2086,28 @@ export async function startServer(cfg: Config) {
         const floor = here();
         if (!floor) break;
         if (floor.furniture.remove(str(msg.id, 20))) furnitureChanged(floor);
+        break;
+      }
+      case 'furn.floor': {
+        const floor = here();
+        if (!floor) break;
+        const err = floor.furniture.setFloor(msg.floor && typeof msg.floor === 'object' ? msg.floor : null);
+        if (err) return warn(c, err);
+        furnitureChanged(floor);
+        break;
+      }
+      case 'asset.update': {
+        const r = assetLib.update(str(msg.id, 20), msg.asset && typeof msg.asset === 'object' ? msg.asset : {});
+        if (typeof r === 'string') return warn(c, r);
+        broadcast({ t: 'assets', assets: assetLib.all() });
+        break;
+      }
+      case 'asset.remove': {
+        const gone = assetLib.remove(str(msg.id, 20));
+        if (!gone) break;
+        for (const f of floors.values()) if (f.furniture.removeAsset(gone.id)) furnitureChanged(f);
+        broadcast({ t: 'assets', assets: assetLib.all() });
+        toastAll(`📦 ${who} took ${gone.name} out of the library`);
         break;
       }
       case 'furn.desk': {

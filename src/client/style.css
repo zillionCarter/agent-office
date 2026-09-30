@@ -1185,4 +1185,30 @@ body.building #hint { display: none !important; }
 .build-key kbd { font: inherit; font-weight: 900; color: var(--ink); background: #fff; border: 2px solid var(--ink); border-radius: 6px; padding: 0 5px; }
 .build-foot { display: flex; gap: 6px; margin-top: 12px; }
 .build-foot .btn { flex: 1; }
-@media (max-width: 700px) { .build-panel { width: 160px; } .build-items { grid-template-columns: 1fr; } 
+@media (max-width: 700px) { .build-panel { width: 160px; } .build-items { grid-template-columns: 1fr; } }
+/* ---------- Your models ---------- */
+.modal.assets { width: min(680px, 100%); }
+.asset-list h3 { margin: 14px 0 6px; font-size: 14px; font-weight: 900; }
+.asset-row { display: flex; gap: 10px; align-items: center; padding: 8px 10px; margin-bottom: 6px; background: #fff; border: 2px solid var(--ink); border-radius: 12px; }
+.asset-icon { font-size: 22px; }
+.asset-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.asset-text small { font-size: 12px; font-weight: 700; color: var(--muted); }
+.asset-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+.asset-btns .btn { padding: 3px 9px; font-size: 13px; }
+.modal.asset-setup { width: min(1080px, 100%); }
+.asset-setup .body { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 14px; }
+.asset-canvas { width: 100%; height: min(62vh, 560px); background: linear-gradient(#eef4ff, #fdf6ec); border: 3px solid var(--ink); border-radius: 14px; cursor: grab; touch-action: none; }
+.asset-canvas.placing { cursor: crosshair; }
+.asset-side label { display: block; margin: 10px 0 4px; font-weight: 800; }
+.asset-side input[type=text] { width: 100%; box-sizing: border-box; }
+.asset-side input[type=number] { width: 80px; }
+.asset-size { font-size: 12px; font-weight: 700; color: var(--muted); }
+.asset-tools { flex-wrap: wrap; gap: 6px; }
+.asset-tools .btn { padding: 4px 9px; font-size: 13px; }
+.asset-lists { margin-top: 10px; display: grid; gap: 6px; max-height: 240px; overflow-y: auto; }
+.asset-mark { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 13px; font-weight: 800; }
+.asset-mark .btn.mini { padding: 1px 7px; font-size: 12px; }
+.asset-mark input[type=number] { width: 64px; }
+.build-swatch { display: inline-block; width: 16px; height: 16px; border: 2px solid var(--ink); border-radius: 5px; }
+.build-panel > .btn { width: 100%; margin-top: 6px; }
+@media (max-width: 800px) { .asset-setup .body { grid-template-columns: 1fr; } }

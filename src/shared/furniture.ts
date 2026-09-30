@@ -4,7 +4,7 @@
 
 import { DESKS, FLOOR, RECEPTION } from './layout.js';
 
-export type FurnitureKind = 'wall' | 'glass' | 'divider' | 'door' | 'plant' | 'couch' | 'armchair' | 'table' | 'lamp' | 'rug' | 'cooler' | 'bookcase' | 'filing' | 'sign';
+export type FurnitureKind = 'wall' | 'glass' | 'divider' | 'door' | 'plant' | 'couch' | 'armchair' | 'table' | 'lamp' | 'rug' | 'cooler' | 'bookcase' | 'filing' | 'sign' | 'asset';
 
 export interface FurnitureDef {
   kind: FurnitureKind;
@@ -21,8 +21,8 @@ export interface FurnitureDef {
   color: string;
   /** People walk through it (a rug, a doorway). */
   walkThrough?: boolean;
-  /** Shown in this group of the build palette. */
-  group: 'Walls' | 'Furniture' | 'Decor';
+  /** Shown in this group of the build palette (your own models are listed from the library instead). */
+  group: 'Walls' | 'Furniture' | 'Decor' | 'Mine';
 }
 
 export const FURNITURE: Record<FurnitureKind, FurnitureDef> = {
@@ -40,6 +40,8 @@ export const FURNITURE: Record<FurnitureKind, FurnitureDef> = {
   lamp: { kind: 'lamp', label: 'Floor lamp', emoji: '💡', w: 0.45, d: 0.45, h: 1.8, colored: true, color: '#ffd166', group: 'Decor' },
   rug: { kind: 'rug', label: 'Rug', emoji: '🟫', w: 3, d: 2, h: 0.02, stretch: true, colored: true, color: '#e9c46a', walkThrough: true, group: 'Decor' },
   sign: { kind: 'sign', label: 'Sign', emoji: '🪧', w: 1.2, d: 0.3, h: 2, colored: true, color: '#2b2d42', group: 'Decor' },
+  // One of your own models from the library (shared/assets.ts): its size is its model's.
+  asset: { kind: 'asset', label: 'Your model', emoji: '📦', w: 1, d: 1, h: 1, color: '#fffaf3', group: 'Mine' },
 };
 
 export const FURNITURE_KINDS = Object.keys(FURNITURE) as FurnitureKind[];
@@ -58,6 +60,11 @@ export interface FurniturePlacement {
   color?: string;
   /** A sign's words. */
   text?: string;
+  /** Your own model: which one from the library, and how big (times its size as exported). */
+  asset?: string;
+  scale?: number;
+  /** A model with a screen: the web page on it. */
+  url?: string;
 }
 
 export interface FurnitureItem extends FurniturePlacement {
@@ -73,10 +80,46 @@ export interface DeskPlacement {
   rotY: number;
 }
 
+/** How a floor's floor looks (see FLOOR_STYLES); none is the office's wooden planks. */
+export interface FloorStyle {
+  style: FloorStyleKind;
+  color?: string;
+  /** A picture from the library, for `style: 'image'`, and how many meters one copy of it covers. */
+  image?: string;
+  tile?: number;
+}
+
+export type FloorStyleKind = 'planks' | 'tiles' | 'carpet' | 'concrete' | 'checker' | 'marble' | 'herringbone' | 'image';
+
+export const FLOOR_STYLES: { style: FloorStyleKind; label: string; color: string }[] = [
+  { style: 'planks', label: 'Wood planks', color: '#e7b98a' },
+  { style: 'herringbone', label: 'Herringbone', color: '#c98b5a' },
+  { style: 'tiles', label: 'Tiles', color: '#e9ecef' },
+  { style: 'checker', label: 'Checkerboard', color: '#2b2d42' },
+  { style: 'marble', label: 'Marble', color: '#f1f3f5' },
+  { style: 'carpet', label: 'Carpet', color: '#577590' },
+  { style: 'concrete', label: 'Polished concrete', color: '#adb5bd' },
+  { style: 'image', label: 'Your picture', color: '#ffffff' },
+];
+
 export interface FurnitureState {
   items: FurnitureItem[];
   /** Desks moved from where the office puts them, by desk id. */
   desks: Record<string, DeskPlacement>;
+  /** The floor's own flooring; none is the office's. */
+  floor?: FloorStyle;
+}
+
+export function cleanFloorStyle(f: Partial<FloorStyle> | null | undefined): FloorStyle | undefined {
+  if (!f || !FLOOR_STYLES.some((s) => s.style === f.style)) return undefined;
+  const out: FloorStyle = { style: f.style as FloorStyleKind };
+  if (typeof f.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(f.color)) out.color = f.color.toLowerCase();
+  if (out.style === 'image') {
+    if (typeof f.image !== 'string' || !/^[a-f0-9]{12}$/.test(f.image)) return undefined;
+    out.image = f.image;
+    out.tile = Number.isFinite(f.tile) ? Math.min(20, Math.max(0.25, f.tile as number)) : 2;
+  }
+  return out;
 }
 
 export const MAX_FURNITURE = 250;
@@ -108,6 +151,12 @@ export function cleanPlacement(p: Partial<FurniturePlacement>): FurniturePlaceme
   if (def.stretch && Number.isFinite(p.length)) out.length = Math.round(Math.min(MAX_LENGTH, Math.max(MIN_LENGTH, p.length as number)) * 20) / 20;
   if (def.colored && typeof p.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(p.color)) out.color = p.color.toLowerCase();
   if (kind === 'sign') out.text = typeof p.text === 'string' && p.text.trim() ? p.text.trim().slice(0, 40) : 'Office';
+  if (kind === 'asset') {
+    if (typeof p.asset !== 'string' || !/^[a-f0-9]{12}$/.test(p.asset)) return 'Pick one of your models';
+    out.asset = p.asset;
+    out.scale = Number.isFinite(p.scale) ? Math.round(Math.min(100, Math.max(0.02, p.scale as number)) * 1000) / 1000 : 1;
+    if (typeof p.url === 'string' && /^https?:\/\/\S+$/i.test(p.url.trim())) out.url = p.url.trim().slice(0, 2000);
+  }
   return out;
 }
 

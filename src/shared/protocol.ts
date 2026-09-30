@@ -4,7 +4,8 @@ import type { Look } from './avatar.js';
 import type { WorkerRole } from './roles.js';
 import type { CabinetFrame, CabinetState, CabinetView } from './cabinet.js';
 import type { DecorPlacement, Decoration } from './decor.js';
-import type { DeskPlacement, FurniturePlacement, FurnitureState } from './furniture.js';
+import type { DeskPlacement, FloorStyle, FurniturePlacement, FurnitureState } from './furniture.js';
+import type { AssetInfo } from './assets.js';
 import type { DogState } from './dog.js';
 import type { EmoteId } from './emotes.js';
 import type { BallState } from './hoop.js';
@@ -1126,6 +1127,12 @@ export type ClientMsg =
   /** Build mode: move, turn, stretch or repaint one. */
   | { t: 'furn.update'; id: string; item: Partial<FurniturePlacement> }
   | { t: 'furn.remove'; id: string }
+  /** Build mode: lay a new floor on your floor, or put the office's back (null). */
+  | { t: 'furn.floor'; floor: FloorStyle | null }
+  /** Your own models and pictures: rename one, size it, set up its seats, desk or screen. */
+  | { t: 'asset.update'; id: string; asset: Partial<AssetInfo> }
+  /** Take one out of the library (and off every floor). */
+  | { t: 'asset.remove'; id: string }
   /** Build mode: move a desk, or put it back where the office puts it (null). */
   | { t: 'furn.desk'; deskId: string; place: DeskPlacement | null }
   /** Put a tune on the jukebox (a JUKEBOX_TUNES id), or a stream; with neither, turn it back on. */
@@ -1216,6 +1223,8 @@ export type ServerMsg =
       peers: PeerInfo[];
       /** Every floor of the building, for the elevator. */
       floors: FloorInfo[];
+      /** Your own models and pictures, the building's library. */
+      assets: AssetInfo[];
       /** Where new projects are cloned to, on the office's machine. */
       projectsDir: ProjectsDirState;
       ice: { urls: string | string[]; username?: string; credential?: string }[];
@@ -1292,6 +1301,7 @@ export type ServerMsg =
   | { t: 'services'; state: ServicesState }
   | { t: 'decor'; items: Decoration[] }
   | { t: 'furniture'; furniture: FurnitureState }
+  | { t: 'assets'; assets: AssetInfo[] }
   /** What the dog on your floor is up to now: sent at the start of each leg of its day. */
   | { t: 'dog'; dog: DogState }
   /** The basketball on your floor was picked up, thrown, or put back under the hoop. */
