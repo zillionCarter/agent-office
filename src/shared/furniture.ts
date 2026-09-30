@@ -4,7 +4,7 @@
 
 import { DESKS, FLOOR, LOT, RECEPTION } from './layout.js';
 
-export type FurnitureKind = 'wall' | 'glass' | 'divider' | 'door' | 'plant' | 'couch' | 'armchair' | 'table' | 'lamp' | 'rug' | 'cooler' | 'bookcase' | 'filing' | 'sign' | 'asset';
+export type FurnitureKind = 'wall' | 'glass' | 'divider' | 'door' | 'desk' | 'plant' | 'couch' | 'armchair' | 'table' | 'lamp' | 'pendant' | 'neon' | 'rug' | 'cooler' | 'bookcase' | 'filing' | 'sign' | 'asset';
 
 export interface FurnitureDef {
   kind: FurnitureKind;
@@ -22,7 +22,9 @@ export interface FurnitureDef {
   /** People walk through it (a rug, a doorway). */
   walkThrough?: boolean;
   /** Shown in this group of the build palette (your own models are listed from the library instead). */
-  group: 'Walls' | 'Furniture' | 'Decor' | 'Mine';
+  group: 'Walls' | 'Furniture' | 'Lights' | 'Decor' | 'Mine';
+  /** It gives off light, from this high up (see client world/furniture.ts). */
+  light?: number;
 }
 
 export const FURNITURE: Record<FurnitureKind, FurnitureDef> = {
@@ -30,6 +32,8 @@ export const FURNITURE: Record<FurnitureKind, FurnitureDef> = {
   glass: { kind: 'glass', label: 'Glass wall', emoji: '🪟', w: 3, d: 0.1, h: 2.6, stretch: true, colored: true, color: '#2b2d42', group: 'Walls' },
   divider: { kind: 'divider', label: 'Low divider', emoji: '▭', w: 2.4, d: 0.12, h: 1.4, stretch: true, colored: true, color: '#8ecae6', group: 'Walls' },
   door: { kind: 'door', label: 'Doorway', emoji: '🚪', w: 1.2, d: 0.14, h: 2.8, colored: true, color: '#fffaf3', walkThrough: true, group: 'Walls' },
+  // A desk like the office's own, chair and all: a worker is hired at it like at any other.
+  desk: { kind: 'desk', label: 'Worker desk', emoji: '🖥️', w: 2.2, d: 1.1, h: 0.78, colored: true, color: '#f7f3ea', group: 'Furniture' },
   couch: { kind: 'couch', label: 'Couch', emoji: '🛋️', w: 2.1, d: 0.9, h: 0.85, colored: true, color: '#577590', group: 'Furniture' },
   armchair: { kind: 'armchair', label: 'Armchair', emoji: '💺', w: 0.95, d: 0.9, h: 0.85, colored: true, color: '#e76f51', group: 'Furniture' },
   table: { kind: 'table', label: 'Round table', emoji: '🪑', w: 1.3, d: 1.3, h: 0.75, colored: true, color: '#c98b5a', group: 'Furniture' },
@@ -37,7 +41,11 @@ export const FURNITURE: Record<FurnitureKind, FurnitureDef> = {
   filing: { kind: 'filing', label: 'Filing cabinet', emoji: '🗄️', w: 0.55, d: 0.65, h: 1.3, colored: true, color: '#8d99ae', group: 'Furniture' },
   cooler: { kind: 'cooler', label: 'Water cooler', emoji: '🚰', w: 0.45, d: 0.45, h: 1.35, group: 'Furniture', color: '#fffaf3' },
   plant: { kind: 'plant', label: 'Plant', emoji: '🪴', w: 0.7, d: 0.7, h: 1.3, group: 'Decor', color: '#e76f51', colored: true },
-  lamp: { kind: 'lamp', label: 'Floor lamp', emoji: '💡', w: 0.45, d: 0.45, h: 1.8, colored: true, color: '#ffd166', group: 'Decor' },
+  lamp: { kind: 'lamp', label: 'Floor lamp', emoji: '💡', w: 0.45, d: 0.45, h: 1.8, colored: true, color: '#ffd166', group: 'Lights', light: 1.6 },
+  // Hung from the ceiling on a long cord, its shade at head height and a bit.
+  pendant: { kind: 'pendant', label: 'Pendant light', emoji: '🏮', w: 0.6, d: 0.6, h: 2.6, colored: true, color: '#ffd166', walkThrough: true, group: 'Lights', light: 2.35 },
+  // A glowing tube on a wall, as long as you like.
+  neon: { kind: 'neon', label: 'Neon bar', emoji: '🟪', w: 1.6, d: 0.1, h: 2.3, stretch: true, colored: true, color: '#ff4fd8', walkThrough: true, group: 'Lights', light: 2.2 },
   rug: { kind: 'rug', label: 'Rug', emoji: '🟫', w: 3, d: 2, h: 0.02, stretch: true, colored: true, color: '#e9c46a', walkThrough: true, group: 'Decor' },
   sign: { kind: 'sign', label: 'Sign', emoji: '🪧', w: 1.2, d: 0.3, h: 2, colored: true, color: '#2b2d42', group: 'Decor' },
   // One of your own models from the library (shared/assets.ts): its size is its model's.

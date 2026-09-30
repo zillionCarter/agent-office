@@ -28,6 +28,11 @@ export interface PlacedDesk extends DeskDef {
   seatY: number;
   /** The model it's on. */
   item: string;
+  /** How high its laptop goes and how far along from the desk's middle, when that's known (a worker desk); else it's found on the model. */
+  deskTop?: number;
+  laptopZ?: number;
+  /** The ground it stands on, when that isn't the floor (the lot's, down on the street). */
+  baseY?: number;
 }
 
 export function placedDesk(item: FurnitureItem, asset: AssetInfo | undefined): PlacedDesk | undefined {
@@ -54,17 +59,29 @@ export function placedSeats(item: FurnitureItem, asset: AssetInfo | undefined): 
   });
 }
 
-/** Every desk and seat on the models put down on a floor. */
-export function placedAll(items: FurnitureItem[], assets: AssetInfo[]): { desks: PlacedDesk[]; seats: SeatDef[] } {
+/** A worker desk put down in build mode: a desk like the office's own, where it was put. */
+export function workerDesk(item: FurnitureItem): PlacedDesk {
+  return { id: deskIdOf(item.id), label: 'Desk', x: item.x, z: item.z, rotY: item.rotY, seatY: 0.45, item: item.id, deskTop: 0.78, laptopZ: -0.06 };
+}
+
+/**
+ * Every desk and seat put down on a floor (or, with `baseY`, the street's height, on the lot): the
+ * worker desks, and the desks and seats set up on your models.
+ */
+export function placedAll(items: FurnitureItem[], assets: AssetInfo[], baseY = 0): { desks: PlacedDesk[]; seats: SeatDef[] } {
   const byId = new Map(assets.map((a) => [a.id, a]));
   const desks: PlacedDesk[] = [];
   const seats: SeatDef[] = [];
   for (const it of items) {
+    if (it.kind === 'desk') {
+      desks.push({ ...workerDesk(it), ...(baseY ? { baseY } : {}) });
+      continue;
+    }
     if (it.kind !== 'asset' || !it.asset) continue;
     const a = byId.get(it.asset);
     const d = placedDesk(it, a);
-    if (d) desks.push(d);
-    seats.push(...placedSeats(it, a));
+    if (d) desks.push(baseY ? { ...d, baseY } : d);
+    seats.push(...placedSeats(it, a).map((s) => (baseY ? { ...s, y: baseY } : s)));
   }
   return { desks, seats };
 }

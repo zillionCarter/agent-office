@@ -310,6 +310,12 @@ export const EXIT_STAIRS = {
 export const BALCONY_DOOR: Opening = { wall: 'south', u: -4, width: 3, y0: 0, y1: 2.5 };
 /** The smoking balcony, hanging over the garage entrance. */
 export const BALCONY = { minX: -10.5, maxX: 2.5, minZ: FLOOR.maxZ + WALL_T, maxZ: FLOOR.maxZ + WALL_T + 3.4 } as const;
+/**
+ * Stairs off the bottom floor's balcony, at its east end: through a gap in the railing and down
+ * eastward to the street, by the lot in front of the garage (a quicker way out to the lot beside
+ * the building than the exit door round the back). The floors above keep their railing whole.
+ */
+export const BALCONY_STAIRS = { x0: BALCONY.maxX, minZ: BALCONY.maxZ - 1.4, maxZ: BALCONY.maxZ, steps: 15, run: 0.34 } as const;
 /** The ashtray on the balcony, where a smoke break starts. */
 export const ASHTRAY = { x: -8.2, z: BALCONY.maxZ - 0.55 } as const;
 /**

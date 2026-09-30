@@ -38,3 +38,13 @@ test('each seat on a model is a place to sit, at its height', () => {
   const all = placedAll([item(), item({ id: 'i2', asset: 'bbbbbbbbbbbb' }), { ...item({ id: 'w' }), kind: 'wall', asset: undefined }], [asset({ desk: { x: 0, y: 0.4, z: 0, rotY: 0 } })]);
   assert.deepEqual(all.desks.map((d) => d.id), ['a-i1'], 'a model not in the library, and a wall, have none');
 });
+
+test('a worker desk put down is a desk where it was put, and on the lot everything stands on the street', () => {
+  const desk = { ...item({ id: 'd1', kind: 'desk', asset: undefined, x: 30, z: 4, rotY: 1 }) };
+  const { desks } = placedAll([desk], []);
+  assert.deepEqual([desks[0].id, desks[0].x, desks[0].z, desks[0].rotY, desks[0].deskTop], ['a-d1', 30, 4, 1, 0.78]);
+  const onLot = placedAll([desk, item({ id: 'c1' })], [asset({ seats: [{ x: 0, y: 0.5, z: 0, rotY: 0 }] })], -3.6);
+  assert.equal(onLot.desks[0].baseY, -3.6);
+  assert.equal(onLot.seats[0].y, -3.6);
+  close(onLot.seats[0].hips, 0.5);
+});

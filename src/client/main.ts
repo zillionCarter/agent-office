@@ -67,6 +67,8 @@ import { openLibrary } from './ui/assets';
 import { ScreenLayer } from './world/screens';
 import { openBrowser } from './ui/browser';
 import { FurnitureView } from './world/furniture';
+import { layLot } from './world/outside';
+import type { FloorStyle } from '../shared/furniture';
 import { openWorkerLook } from './ui/workerlook';
 import { cantMove, openCoworkPicker, openMoveFloor, routeCoworkMessage } from './ui/cowork';
 import { toggleFloorMenu } from './ui/floormenu';
@@ -321,12 +323,20 @@ office.group.add(screens.group);
 const showScreens = () => screens.apply(store.furniture.items, store.assets);
 store.on('furniture', showScreens);
 store.on('assets', showScreens);
+// And the lot's, down on the street, for the bottom floor (whose people walk out to them).
+const lotScreens = new ScreenLayer(canvas.parentElement!, office.interactables, streetBelow(0));
+office.group.add(lotScreens.group);
+let lotActive = true;
+const showLotScreens = () => lotScreens.apply(lotActive ? store.lot.items : [], store.assets);
+store.on('lot', showLotScreens);
+store.on('assets', showLotScreens);
 /** E at a screen: its page, to use, and to change for everyone. */
 function useScreen(itemId: string) {
-  const item = store.furniture.items.find((x) => x.id === itemId);
+  const onLot = !store.furniture.items.some((x) => x.id === itemId);
+  const item = (onLot ? store.lot : store.furniture).items.find((x) => x.id === itemId);
   if (!item) return;
   const name = store.assets.find((a) => a.id === item.asset)?.name ?? 'Screen';
-  openBrowser({ title: name, url: item.url, onNavigate: (url) => net.send({ t: 'furn.update', id: itemId, item: { url } }) });
+  openBrowser({ title: name, url: item.url, onNavigate: (url) => net.send({ t: 'furn.update', id: itemId, item: { url }, lot: onLot }) });
 }
 store.on('furniture', () => furniture.apply(store.furniture));
 // A desk on a model came (or was rebuilt): whoever works there sits down at it.
@@ -342,10 +352,11 @@ furniture.onDesks = () => {
 };
 // The floor's own flooring, laid in build mode: a style, or one of your pictures (loaded once).
 const floorPictures = new Map<string, Promise<HTMLImageElement>>();
-const layFloor = () => {
-  const f = store.furniture.floor;
-  if (!f) return office.setFlooring();
-  if (f.style !== 'image' || !f.image) return office.setFlooring(f);
+const layFloor = () => lay(store.furniture.floor, (f, img) => office.setFlooring(f, img), () => store.furniture.floor?.image);
+/** Lays `f` with `apply`, loading its picture first if it's one of yours (`current` says it's still the one wanted). */
+const lay = (f: FloorStyle | undefined, apply: (f?: FloorStyle, img?: HTMLImageElement) => void, current: () => string | undefined) => {
+  if (!f) return apply();
+  if (f.style !== 'image' || !f.image) return apply(f);
   const id = f.image;
   let pic = floorPictures.get(id);
   if (!pic) {
@@ -358,10 +369,12 @@ const layFloor = () => {
     floorPictures.set(id, pic);
   }
   void pic.then((img) => {
-    if (store.furniture.floor?.image === id) office.setFlooring(f, img);
-  }, () => office.setFlooring());
+    if (current() === id) apply(f, img);
+  }, () => apply());
 };
 store.on('furniture', layFloor);
+// The lot's too, laid the same way out on the street.
+store.on('lot', () => lay(store.lot.floor, layLot, () => store.lot.floor?.image));
 // A model set up anew (made solid, say) is put in again.
 store.on('assets', () => furniture.apply(store.furniture));
 // Changing floors (or going up to the roof) leaves build mode.
@@ -374,10 +387,16 @@ const build = new BuildMode({
   furniture,
   lot: lotView,
   street: () => player.street,
+  // Down on the street, not up on a floor: the catalog's floors are the lot's.
+  outside: () => player.pos.y < -1,
   // The catalog needs the mouse: the player lets go of it while it's open.
   setCatalog: (open) => {
     player.enabled = !open && !modalOpen();
-    if (!open && player.view === 'first' && player.canLock) player.lock();
+    // Open, the mouse is yours to pick with until it closes; then it looks around again.
+    if (open) {
+      player.clearKeys();
+      player.yieldMouse();
+    } else if (player.view === 'first' && player.canLock) player.lock();
   },
   onToggle: (on) => {
     document.body.classList.toggle('building', on);
@@ -624,7 +643,11 @@ function syncStack() {
   office.setLevel(Math.max(0, index), count);
   player.street = streetBelow(index);
   // The lot is down on the street, as far below as this floor is up.
-  lotView.setBase(streetBelow(index));
+  // Its desks and seats are for the bottom floor's people and workers: they're the ones who walk out to it.
+  lotView.setBase(streetBelow(index), index <= 0 && store.floor !== ROOF);
+  lotActive = index <= 0 && store.floor !== ROOF;
+  lotScreens.setBase(streetBelow(index));
+  showLotScreens();
 }
 store.on('floors', syncStack);
 
@@ -2528,14 +2551,14 @@ function hintFor(it: Interactable): Hint {
       return { k: `${left}|${best?.name}|${best?.score}`, parts: [title(`🕹️ ${GAME}`), aside(about), key('E', left !== null ? 'Carry on' : 'Play')] };
     }
     case 'screen': {
-      const url = it.screenId ? screens.url(it.screenId) : undefined;
+      const url = it.screenId ? (screens.url(it.screenId) ?? lotScreens.url(it.screenId)) : undefined;
       let host = '';
       try {
         host = url ? new URL(url).host : '';
       } catch {
         // not a link
       }
-      const model = store.furniture.items.find((x) => x.id === it.screenId);
+      const model = [...store.furniture.items, ...store.lot.items].find((x) => x.id === it.screenId);
       const name = store.assets.find((a) => a.id === model?.asset)?.name ?? 'Screen';
       return { k: url ?? '', parts: [title(`🖥️ ${name}`), aside(host || 'no page yet'), key('E', url ? 'Use it' : 'Put a page on it')] };
     }
@@ -3546,7 +3569,10 @@ function frame(ts?: number) {
   drunkVisionOn = blurry;
   if (build.active) build.update(player.view === 'first' ? BUILD_CENTER : pointer, camera);
   graphics.render(blurry);
-  if (!upTop) screens.render(camera, canvas, [office.group]);
+  if (!upTop) {
+    screens.render(camera, canvas, [office.group]);
+    lotScreens.render(camera, canvas, [office.group]);
+  }
   pointToWaiting(now);
   // Not while the camera's up at the boss's monitor or the arcade, where they'd cover the screen.
   if (firstPerson && !arcade.zoomed && !cabinet.zoomed && !golf.active) {

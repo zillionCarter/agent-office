@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { FLOOR, LOT, ROAD, SLAB, STREET_Y, WALL_T } from '../../shared/layout';
+import type { FloorStyle } from '../../shared/furniture';
+import { paintFlooring } from './flooring';
 import { CAR, supercar, type CarKind } from './cars';
 import type { Collider } from './office';
 import { mergeByMaterial, mesh, textPlane, toon, toonUnique } from './toon';
@@ -178,7 +180,8 @@ export function buildGarage(group: THREE.Group, colliders: Collider[]) {
     park(lot, colliders, kind, color, x, z, face < 0 ? Math.PI : 0);
   }
   // One left out front, for everyone upstairs to look at.
-  park(lot, colliders, 'lambo', '#00b4d8', 9, 18.2, Math.PI / 2);
+  // (Along from the foot of the balcony stairs, so there's room to step off them.)
+  park(lot, colliders, 'lambo', '#00b4d8', 11.5, 19, Math.PI / 2);
   group.add(mergeByMaterial(lot));
 }
 
@@ -293,6 +296,29 @@ const NEIGHBOURS: [number, number, number, number, number, string][] = [
   [50, 4, 10, 15, 18, '#bde0fe'],
 ];
 
+/** The lot's ground (see buildStreet), for laying a floor on it. */
+let lotGround: THREE.CanvasTexture | null = null;
+
+function paintDirt(g: CanvasRenderingContext2D) {
+  g.fillStyle = '#c9b79c';
+  g.fillRect(0, 0, 512, 512);
+  let seed = 7;
+  const rand = () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
+  for (let i = 0; i < 5600; i++) {
+    g.fillStyle = rand() < 0.5 ? '#b8a585' : '#d8c8ad';
+    g.fillRect(rand() * 512, rand() * 512, 5, 5);
+  }
+}
+
+/** Lays a floor on the lot, as build mode set it (see FLOOR_STYLES), or bare ground again (none). */
+export function layLot(style?: FloorStyle, image?: HTMLImageElement) {
+  if (!lotGround) return;
+  const c = lotGround.image as HTMLCanvasElement;
+  if (style) paintFlooring(c, style, image);
+  else paintDirt(c.getContext('2d')!);
+  lotGround.needsUpdate = true;
+}
+
 /** Which way a neighbour at (x, z) is turned: its front to the office. */
 const facing = (x: number, z: number) => (Math.abs(x) > 40 ? (x > 0 ? -Math.PI / 2 : Math.PI / 2) : z > 0 ? Math.PI : 0);
 
@@ -326,18 +352,11 @@ export function buildStreet(group: THREE.Group, colliders: Collider[], night: Ni
 
   // The lot beside the building (LOT): cleared ground inside a low kerb, with a sign on the street side.
   const L = LOT;
-  const dirt = canvasTexture(256, 256, (g) => {
-    g.fillStyle = '#c9b79c';
-    g.fillRect(0, 0, 256, 256);
-    let seed = 7;
-    const rand = () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
-    for (let i = 0; i < 1400; i++) {
-      g.fillStyle = rand() < 0.5 ? '#b8a585' : '#d8c8ad';
-      g.fillRect(rand() * 256, rand() * 256, 3, 3);
-    }
-  });
+  // Bare ground until a floor is laid on it in build mode (see layLot): one canvas for 6 m, repeated.
+  const dirt = canvasTexture(512, 512, paintDirt);
   dirt.wrapS = dirt.wrapT = THREE.RepeatWrapping;
   dirt.repeat.set((L.maxX - L.minX) / 6, (L.maxZ - L.minZ) / 6);
+  lotGround = dirt;
   group.add(groundPlane(L.maxX - L.minX, L.maxZ - L.minZ, (L.minX + L.maxX) / 2, G - 0.006, (L.minZ + L.maxZ) / 2, dirt));
   const kerb = toon('#e3ddd0');
   const k = 0.25;

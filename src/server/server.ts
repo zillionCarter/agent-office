@@ -261,7 +261,11 @@ export async function startServer(cfg: Config) {
   const lotDir = path.join(cfg.dataDir, 'lot');
   mkdirSync(lotDir, { recursive: true, mode: 0o700 });
   const lot = new Furniture(lotDir, LOT_AREA);
-  const lotChanged = () => broadcast({ t: 'lot', furniture: lot.get() });
+  const lotChanged = () => {
+    broadcast({ t: 'lot', furniture: lot.get() });
+    // A desk on the lot taken away: whoever sat there (a bottom-floor worker) moves to another desk.
+    for (const f of floors.values()) f.workers.rehome();
+  };
   if (cfg.projects) {
     const err = building.setProjectsDir(cfg.projects, 'the command line');
     if (err) console.error(`agent-office: --projects: ${err}`);
@@ -579,6 +583,8 @@ export async function startServer(cfg: Config) {
 
   const floorContext: FloorContext = {
     assets: () => assetLib.all(),
+    lot: () => lot.get().items,
+    isBottom: (f) => [...floors.values()][0] === f,
     agentCmd: cfg.agentCmd,
     agentArgs: cfg.agentArgs,
     hook: { url: `http://127.0.0.1:${hookPort}`, token: '' },
@@ -2120,6 +2126,12 @@ export async function startServer(cfg: Config) {
         break;
       }
       case 'furn.floor': {
+        if (msg.lot) {
+          const err = lot.setFloor(msg.floor && typeof msg.floor === 'object' ? msg.floor : null);
+          if (err) return warn(c, err);
+          lotChanged();
+          break;
+        }
         const floor = here();
         if (!floor) break;
         const err = floor.furniture.setFloor(msg.floor && typeof msg.floor === 'object' ? msg.floor : null);

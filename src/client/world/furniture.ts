@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { FURNITURE, MOVABLE_DESKS, footprint, widthOf, type FurniturePlacement, type FurnitureState } from '../../shared/furniture';
 import { mesh, roundedBox, textPlane, toon } from './toon';
-import { plant, type Collider, type Office } from './office';
+import { chair, plant, type Collider, type Office } from './office';
+import { WALL_HEIGHT } from '../../shared/layout';
 import { modelInstance, solidColliders } from './assets';
 import type { AssetInfo } from '../../shared/assets';
 import { DESK_BY_ID, SEATING_BY_ID } from '../../shared/layout';
@@ -13,6 +14,8 @@ import type { Interactable } from './office';
 // into colliders so nobody walks through a wall, and rebuilt when it changes.
 
 const box = (w: number, h: number, d: number) => new THREE.BoxGeometry(w, h, d);
+/** Every light is work for every lit surface: past this many, more lamps are only for looks. */
+const MAX_LIGHTS = 12;
 
 /** A piece of furniture as it looks, centered on (0, 0, 0) with its width along x (as placed, before turning). */
 export function buildPiece(p: Pick<FurniturePlacement, 'kind' | 'length' | 'color' | 'text' | 'scale'>): THREE.Group {
@@ -48,6 +51,32 @@ export function buildPiece(p: Pick<FurniturePlacement, 'kind' | 'length' | 'colo
       g.add(mesh(box(w, 0.35, d), main, 0, h - 0.175, 0));
       g.add(mesh(box(w - 0.24, 0.04, d + 0.02), dark, 0, h - 0.37, 0));
       break;
+    case 'desk': {
+      // As the office's own desks are (see buildDesk): its top, legs, a modesty panel away from the worker, and a chair.
+      g.add(mesh(roundedBox(w - 0.06, 0.08, d - 0.04, 0.08), main, 0, h - 0.04, 0));
+      const leg = toon('#8d99ae');
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) g.add(mesh(new THREE.CylinderGeometry(0.035, 0.035, h - 0.08, 8), leg, sx * (w / 2 - 0.14), (h - 0.08) / 2, sz * (d / 2 - 0.12)));
+      g.add(mesh(box(w - 0.3, 0.32, 0.03), toon('#3d405b'), 0, h - 0.26, -d / 2 + 0.06));
+      const seat = chair('#577590');
+      seat.position.set(0, 0, 0.9);
+      g.add(seat);
+      break;
+    }
+    case 'pendant': {
+      // Down on a cord from the ceiling (on the lot, from a bracket a meter and a half up).
+      const top = WALL_HEIGHT;
+      const shadeY = h;
+      g.add(mesh(new THREE.CylinderGeometry(0.008, 0.008, top - shadeY, 4), toon('#2b2d42'), 0, (top + shadeY) / 2, 0, false));
+      g.add(mesh(new THREE.CylinderGeometry(0.1, 0.3, 0.26, 20, 1, true), toon(color), 0, shadeY, 0, false));
+      g.add(mesh(new THREE.SphereGeometry(0.08, 12, 10), toon('#fffaf3', { emissive: '#fff1c1' }), 0, shadeY - 0.08, 0, false));
+      break;
+    }
+    case 'neon': {
+      const glow = toon(color, { emissive: `#${new THREE.Color(color).getHexString()}` });
+      g.add(mesh(new THREE.CapsuleGeometry(0.035, Math.max(0.1, w - 0.07), 6, 12).rotateZ(Math.PI / 2), glow, 0, h, 0.03, false));
+      for (const sx of [-1, 1]) g.add(mesh(box(0.04, 0.08, 0.06), toon('#8d99ae'), sx * (w / 2 - 0.1), h, 0.0, false));
+      break;
+    }
     case 'couch':
       g.add(mesh(roundedBox(w, 0.42, d, 0.08), main, 0, 0.21, 0));
       g.add(mesh(roundedBox(w, 0.5, 0.22, 0.08), main, 0, 0.62, -d / 2 + 0.11));
@@ -176,6 +205,10 @@ export class FurnitureView {
   private deskTops = new Map<string, number>();
   /** Called when the desks on models change, so workers find their seats. */
   onDesks: (() => void) | null = null;
+  /** The lights put down (floor lamps, pendants, neon): real ones, at most MAX_LIGHTS of them. */
+  private lights = new Map<string, THREE.PointLight>();
+  /** On the lot: its desks and seats count only while you're on the bottom floor, whose workers they are. */
+  private active = true;
 
   /** How high the ground it stands on is: the floor (0), or the street under it (the lot). */
   private base = 0;
@@ -190,10 +223,11 @@ export class FurnitureView {
     private lot = false,
   ) {}
 
-  /** The street is this far down from the floor you're on (the lot): everything moves down with it. */
-  setBase(y: number) {
-    if (y === this.base) return;
+  /** The street is this far down from the floor you're on (the lot): everything moves down with it. `active`: its desks and seats are yours to use. */
+  setBase(y: number, active = true) {
+    if (y === this.base && active === this.active) return;
     this.base = y;
+    this.active = active;
     this.group.position.y = y;
     for (const id of [...this.pieces.keys()]) this.drop(id);
     if (this.last) this.apply(this.last);
@@ -219,6 +253,7 @@ export class FurnitureView {
       this.colliders.push(...cs);
       const piece = { key, obj, colliders: cs };
       this.pieces.set(it.id, piece);
+      this.light(it, obj);
       if (it.kind === 'asset') {
         void fillAsset(obj, it).then((ok) => {
           // Changed or taken away while it loaded: whatever replaced it has its own.
@@ -231,9 +266,19 @@ export class FurnitureView {
       }
     }
     for (const id of [...this.pieces.keys()]) if (!seen.has(id)) this.drop(id);
-    if (this.lot) return;
-    for (const id of MOVABLE_DESKS) this.office.moveDesk(id, state.desks[id]);
-    this.placeSeats(state);
+    if (!this.lot) for (const id of MOVABLE_DESKS) this.office.moveDesk(id, state.desks[id]);
+    this.placeSeats(this.lot && !this.active ? { items: [], desks: {} } : state);
+  }
+
+  /** A light for a lamp, a pendant or a neon bar, while there are fewer than MAX_LIGHTS. */
+  private light(it: FurniturePlacement & { id: string }, obj: THREE.Group) {
+    const def = FURNITURE[it.kind];
+    if (def.light === undefined || this.lights.size >= MAX_LIGHTS) return;
+    const color = it.color ?? def.color;
+    const l = new THREE.PointLight(color, it.kind === 'neon' ? 1.6 : 2.4, it.kind === 'neon' ? 6 : 9, 1.2);
+    l.position.set(0, def.light - 0.1, it.kind === 'neon' ? 0.3 : 0);
+    obj.add(l);
+    this.lights.set(it.id, l);
   }
 
   /**
@@ -241,9 +286,9 @@ export class FurnitureView {
    * at (in DESK_BY_ID, which only ever holds the floor you're on here), each seat a place to sit.
    */
   private placeSeats(state: FurnitureState) {
-    const { desks, seats } = placedAll(state.items, this.assets());
+    const { desks, seats } = placedAll(state.items, this.assets(), this.lot ? this.base : 0);
     let changed = false;
-    const deskKeys = new Map(desks.map((d) => [d.id, JSON.stringify([d.x, d.z, d.rotY, d.seatY, this.deskTops.get(d.id)])]));
+    const deskKeys = new Map(desks.map((d) => [d.id, JSON.stringify([d.x, d.z, d.rotY, d.seatY, d.baseY, d.deskTop ?? this.deskTops.get(d.id)])]));
     for (const [id] of this.modelDesks) {
       if (deskKeys.has(id)) continue;
       this.office.removeModelDesk(id);
@@ -254,11 +299,11 @@ export class FurnitureView {
     for (const d of desks) {
       const key = deskKeys.get(d.id)!;
       if (this.modelDesks.get(d.id) === key) continue;
-      this.office.addModelDesk(d, this.deskTops.get(d.id));
+      this.office.addModelDesk(d, d.deskTop ?? this.deskTops.get(d.id));
       DESK_BY_ID.set(d.id, d);
       this.modelDesks.set(d.id, key);
       changed = true;
-      if (!this.deskTops.has(d.id)) this.findDeskTop(d);
+      if (d.deskTop === undefined && !this.deskTops.has(d.id)) this.findDeskTop(d);
     }
     const seatKeys = new Map(seats.map((s) => [s.id, JSON.stringify([s.x, s.z, s.rotY, s.hips])]));
     for (const [id, s] of this.modelSeats) {
@@ -271,7 +316,7 @@ export class FurnitureView {
     for (const s of seats) {
       if (this.modelSeats.has(s.id)) continue;
       SEATING_BY_ID.set(s.id, s);
-      const it: Interactable = { kind: 'seat', seatId: s.id, x: s.x, z: s.z, radius: 1.1 };
+      const it: Interactable = { kind: 'seat', seatId: s.id, x: s.x, z: s.z, radius: 1.1, ...(s.y ? { y: s.y } : {}) };
       this.office.interactables.push(it);
       this.modelSeats.set(s.id, { key: seatKeys.get(s.id)!, it });
     }
@@ -288,12 +333,13 @@ export class FurnitureView {
       if (obj.userData.placeholder?.parent && left > 0) return void setTimeout(() => tryIt(left - 1), 300);
       obj.updateMatrixWorld(true);
       // Straight down onto the model, where the laptop would sit in front of the worker.
-      const ahead = new THREE.Vector3(d.x + Math.sin(d.rotY) * 0.31, 3, d.z + Math.cos(d.rotY) * 0.31);
+      const base = d.baseY ?? 0;
+      const ahead = new THREE.Vector3(d.x + Math.sin(d.rotY) * 0.31, base + 3, d.z + Math.cos(d.rotY) * 0.31);
       const hit = new THREE.Raycaster(ahead, new THREE.Vector3(0, -1, 0), 0, 3).intersectObject(obj, true)[0];
-      const top = hit ? Math.round(hit.point.y * 100) / 100 : 0.75;
+      const top = hit ? Math.round((hit.point.y - base) * 100) / 100 : 0.75;
       this.deskTops.set(d.id, top);
       this.office.addModelDesk(d, top);
-      this.modelDesks.set(d.id, JSON.stringify([d.x, d.z, d.rotY, d.seatY, top]));
+      this.modelDesks.set(d.id, JSON.stringify([d.x, d.z, d.rotY, d.seatY, d.baseY, top]));
       this.onDesks?.();
     };
     tryIt(40);
@@ -313,6 +359,12 @@ export class FurnitureView {
   private drop(id: string) {
     const p = this.pieces.get(id);
     if (!p) return;
+    const l = this.lights.get(id);
+    if (l) {
+      l.removeFromParent();
+      l.dispose();
+      this.lights.delete(id);
+    }
     this.group.remove(p.obj);
     p.obj.traverse((o) => (o as THREE.Mesh).geometry?.dispose());
     for (const c of p.colliders) {

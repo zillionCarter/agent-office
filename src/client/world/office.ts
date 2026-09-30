@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { ASHTRAY, BALCONY, BALCONY_DOOR, BEANBAGS, BOARDS, BOOKSHELF, CABINET, DESKS, DESK_SIZE, ELEVATOR, EXIT_DOOR, EXIT_STAIRS, FLOOR, GONG, JUKEBOX, KIOSK, LADDER, LOFT, MACHINE_MONITOR, MEETING_BOARD, MEETING_ROOM, MEETING_SEATS, MEETING_TABLE, PLANTS, RECEPTION, SEATING_BY_ID, SLAB, STAIRS, STATIONS, STATION_AGENT, STOREY, STREET_Y, TV, WALL_HEIGHT, WALL_T, WINDOWS, deskSeat, streetBelow, type DeskDef, type Opening, type Side, type StationKind } from '../../shared/layout';
+import { ASHTRAY, BALCONY, BALCONY_DOOR, BALCONY_STAIRS, BEANBAGS, BOARDS, BOOKSHELF, CABINET, DESKS, DESK_SIZE, ELEVATOR, EXIT_DOOR, EXIT_STAIRS, FLOOR, GONG, JUKEBOX, KIOSK, LADDER, LOFT, MACHINE_MONITOR, MEETING_BOARD, MEETING_ROOM, MEETING_SEATS, MEETING_TABLE, PLANTS, RECEPTION, SEATING_BY_ID, SLAB, STAIRS, STATIONS, STATION_AGENT, STOREY, STREET_Y, TV, WALL_HEIGHT, WALL_T, WINDOWS, deskSeat, streetBelow, type DeskDef, type Opening, type Side, type StationKind } from '../../shared/layout';
 import { wallFacing, type WallId, type WallRect } from '../../shared/decor';
 import { deskPoint } from '../../shared/nav';
 import { FLOOR_PALETTES, type FloorPalette } from '../../shared/floors';
@@ -11,7 +11,8 @@ import { buildJukebox, type JukeboxView } from './jukebox';
 import { buildBookshelf } from './bookshelf';
 import { buildCabinet, type CabinetModel } from './cabinet';
 import { buildWhiteboard, type WhiteboardStand } from './whiteboard';
-import { FLOOR_STYLES, type FloorStyle } from '../../shared/furniture';
+import type { FloorStyle } from '../../shared/furniture';
+import { paintFlooring, paintPlanks } from './flooring';
 import { buildGreen, buildTee, type Green, type Tee } from './golf';
 import { buildStack, type Stack } from './stack';
 import { buildTower } from './tower';
@@ -97,7 +98,7 @@ export interface Office {
   /** The arcade cabinet in the lounge, where BLOCKFALL plays (ui/cabinet.ts). */
   cabinet: CabinetModel;
   /** A desk set up on one of your models, where its worker sits and its laptop goes (see shared/placed.ts). */
-  addModelDesk(def: DeskDef & { seatY: number }, deskTop?: number): void;
+  addModelDesk(def: DeskDef & { seatY: number; laptopZ?: number; baseY?: number }, deskTop?: number): void;
   removeModelDesk(id: string): void;
   /** Lays the room's floor as build mode set it on this floor (see FLOOR_STYLES); none puts the planks back. */
   setFlooring(style?: FloorStyle, image?: HTMLImageElement): void;
@@ -194,130 +195,7 @@ function onWall(side: Side, u: number): { x: number; z: number; rotY: number } {
   }
 }
 
-/** Chunky planks in a floor's colors. */
-function paintPlanks(c: HTMLCanvasElement, p: FloorPalette) {
-  const g = c.getContext('2d')!;
-  g.fillStyle = p.floor;
-  g.fillRect(0, 0, 512, 512);
-  for (let row = 0; row < 8; row++) {
-    const offset = (row % 2) * 128;
-    for (let col = -1; col < 3; col++) {
-      const x = col * 256 + offset;
-      g.fillStyle = (row + col) % 3 === 0 ? p.floorAlt : p.floor;
-      g.fillRect(x + 2, row * 64 + 2, 252, 60);
-    }
-    g.fillStyle = p.seam;
-    g.fillRect(0, row * 64, 512, 3);
-  }
-}
 
-/**
- * A floor laid in build mode (see shared/furniture.ts FLOOR_STYLES), painted on the same 512 px canvas
- * as the planks, which covers 6 m of the room each way. `image` is your own picture, for 'image'.
- */
-function paintFlooring(c: HTMLCanvasElement, f: FloorStyle, image?: HTMLImageElement) {
-  const g = c.getContext('2d')!;
-  const base = new THREE.Color(f.color ?? FLOOR_STYLES.find((s) => s.style === f.style)!.color);
-  const tone = (k: number) => `#${base.clone().multiplyScalar(k).getHexString()}`;
-  const mix = (to: string, k: number) => `#${base.clone().lerp(new THREE.Color(to), k).getHexString()}`;
-  // The same speckles every time, so every browser paints the same floor.
-  let seed = 1;
-  const rand = () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
-  g.fillStyle = tone(1);
-  g.fillRect(0, 0, 512, 512);
-  switch (f.style) {
-    case 'planks':
-      paintPlanks(c, { ...FLOOR_PALETTES[0], floor: tone(1), floorAlt: tone(0.92), seam: tone(0.72) });
-      break;
-    case 'herringbone': {
-      const w = 32;
-      const l = 128;
-      for (let row = -2; row < 12; row++) {
-        for (let col = -2; col < 12; col++) {
-          const x = col * w * 2 + row * w;
-          const y = row * w * 2 - col * 0;
-          g.fillStyle = (row + col) % 2 ? tone(1) : tone(0.9);
-          g.save();
-          g.translate(x, y);
-          g.rotate(Math.PI / 4);
-          g.fillRect(0, 0, l, w - 3);
-          g.restore();
-          g.save();
-          g.translate(x + w * 0.7, y + w * 0.7);
-          g.rotate(-Math.PI / 4);
-          g.fillStyle = (row + col) % 2 ? tone(0.94) : tone(0.86);
-          g.fillRect(0, 0, l, w - 3);
-          g.restore();
-        }
-      }
-      break;
-    }
-    case 'tiles':
-      g.fillStyle = tone(0.8);
-      for (let i = 0; i <= 4; i++) {
-        g.fillRect(i * 128 - 2, 0, 4, 512);
-        g.fillRect(0, i * 128 - 2, 512, 4);
-      }
-      break;
-    case 'checker':
-      for (let i = 0; i < 8; i++) for (let j = 0; j < 8; j++) {
-        g.fillStyle = (i + j) % 2 ? tone(1) : mix('#ffffff', 0.9);
-        g.fillRect(i * 64, j * 64, 64, 64);
-      }
-      break;
-    case 'marble': {
-      g.strokeStyle = tone(0.8);
-      g.globalAlpha = 0.5;
-      for (let v = 0; v < 14; v++) {
-        g.lineWidth = 1 + rand() * 2.5;
-        g.beginPath();
-        let x = rand() * 512;
-        let y = 0;
-        g.moveTo(x, y);
-        while (y < 512) {
-          x += (rand() - 0.5) * 40;
-          y += 20 + rand() * 20;
-          g.lineTo(x, y);
-        }
-        g.stroke();
-      }
-      g.globalAlpha = 1;
-      g.fillStyle = tone(0.88);
-      for (let i = 0; i <= 2; i++) {
-        g.fillRect(i * 256 - 1, 0, 2, 512);
-        g.fillRect(0, i * 256 - 1, 512, 2);
-      }
-      break;
-    }
-    case 'carpet':
-      for (let i = 0; i < 9000; i++) {
-        g.fillStyle = rand() < 0.5 ? tone(0.9) : tone(1.08);
-        g.fillRect(rand() * 512, rand() * 512, 2, 2);
-      }
-      break;
-    case 'concrete':
-      for (let i = 0; i < 260; i++) {
-        g.globalAlpha = 0.06 + rand() * 0.06;
-        g.fillStyle = rand() < 0.5 ? tone(0.85) : tone(1.1);
-        g.beginPath();
-        g.arc(rand() * 512, rand() * 512, 10 + rand() * 40, 0, Math.PI * 2);
-        g.fill();
-      }
-      g.globalAlpha = 1;
-      g.fillStyle = tone(0.8);
-      g.fillRect(0, 255, 512, 2);
-      g.fillRect(255, 0, 2, 512);
-      break;
-    case 'image':
-      if (image && image.width) {
-        // The canvas covers 6 m; one copy of the picture covers `tile` meters.
-        const n = Math.max(1, Math.round(6 / (f.tile ?? 2)));
-        const s = 512 / n;
-        for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) g.drawImage(image, i * s, j * s, s, s);
-      }
-      break;
-  }
-}
 
 function floorTexture(width = FLOOR.maxX - FLOOR.minX, depth = FLOOR.maxZ - FLOOR.minZ): THREE.CanvasTexture {
   const c = document.createElement('canvas');
@@ -559,7 +437,8 @@ function buildBalcony(group: THREE.Group, colliders: Collider[], interactables: 
   const sides: [number, number, number, number][] = [
     [minX + inset, maxZ - inset, maxX - inset, maxZ - inset],
     [minX + inset, minZ, minX + inset, maxZ - inset],
-    [maxX - inset, minZ, maxX - inset, maxZ - inset],
+    // The east side stops short of the stairs down (see BALCONY_STAIRS; balconyGate closes it upstairs).
+    [maxX - inset, minZ, maxX - inset, BALCONY_STAIRS.minZ],
   ];
   for (const [x0, z0, x1, z1] of sides) {
     const len = Math.hypot(x1 - x0, z1 - z0);
@@ -664,6 +543,55 @@ function buildBalcony(group: THREE.Group, colliders: Collider[], interactables: 
   sign.scale.multiplyScalar(0.8);
   sign.position.set(-6.5, 2.2, minZ + 0.02);
   group.add(sign);
+}
+
+/** The railing across the top of the balcony stairs, on the floors above the bottom one, where there are none. */
+function balconyGate(): { group: THREE.Group; collider: Collider } {
+  const { maxX } = BALCONY;
+  const { minZ, maxZ } = BALCONY_STAIRS;
+  const x = maxX - 0.06;
+  const g = new THREE.Group();
+  const len = maxZ - minZ - 0.06;
+  g.add(mesh(box(0.06, 1.05, 0.06), toon(PALETTE.deskLeg), x, 0.525, maxZ - 0.06, false));
+  g.add(mesh(box(0.12, 0.07, len + 0.1), toon(PALETTE.wood), x, 1.07, minZ + len / 2));
+  const pane = glassPane(len - 0.1, 0.85);
+  pane.position.set(x, 0.505, minZ + len / 2);
+  pane.rotation.y = Math.PI / 2;
+  g.add(pane);
+  return { group: g, collider: { minX: x - 0.05, maxX: x + 0.05, minZ, maxZ, bottom: -SLAB, top: 99 } };
+}
+
+/**
+ * Stairs off the bottom floor's balcony (BALCONY_STAIRS): from the gap in its railing, down
+ * eastward to the street, with a railing either side. In the ground's space, like the exit stairs.
+ */
+function buildBalconyStairs(group: THREE.Group, colliders: Collider[]) {
+  const { x0, minZ, maxZ, steps, run } = BALCONY_STAIRS;
+  const rise = -STREET_Y / steps;
+  const treads = steps - 1;
+  const width = maxZ - minZ;
+  const cz = (minZ + maxZ) / 2;
+  const stone = toon('#d3d6dd');
+  const tread = toon('#b9bdc6');
+  for (let i = 1; i <= treads; i++) {
+    const x = x0 + (i - 0.5) * run;
+    const top = -i * rise;
+    // Each step a block down to the street, so the stair reads as solid from the side.
+    group.add(mesh(box(run, top - STREET_Y, width), stone, x, (top + STREET_Y) / 2, cz));
+    group.add(mesh(box(run + 0.02, 0.04, width), tread, x, top - 0.015, cz, false));
+    colliders.push({ minX: x - run / 2, maxX: x + run / 2, minZ, maxZ, bottom: STREET_Y, top });
+  }
+  const ink = toon(PALETTE.deskLeg);
+  const railH = 1.0;
+  const endX = x0 + treads * run;
+  for (const z of [minZ + 0.05, maxZ - 0.05]) {
+    const len = Math.hypot(endX - x0, treads * rise);
+    const r = mesh(new THREE.CylinderGeometry(0.035, 0.035, len, 6), ink, (x0 + endX) / 2, -(treads * rise) / 2 + railH, z, false);
+    r.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(endX - x0, -treads * rise, 0).normalize());
+    group.add(r);
+    for (let i = 0; i <= treads; i += 3) group.add(mesh(new THREE.CylinderGeometry(0.03, 0.03, railH, 6), ink, x0 + i * run, -i * rise + railH / 2, z, false));
+    colliders.push({ minX: x0, maxX: endX, minZ: z - 0.06, maxZ: z + 0.06, bottom: STREET_Y, top: 99 });
+  }
 }
 
 /** The bottom floor's balcony stands on posts down to the street, at its outer corners (the ones above it hang off their walls). */
@@ -832,7 +760,7 @@ function seatable(obj: THREE.Object3D, seatId: string, radius: number, interacta
   obj.userData.interact = it;
 }
 
-function chair(color: string): THREE.Group {
+export function chair(color: string): THREE.Group {
   const g = new THREE.Group();
   const mat = toon(color);
   g.add(mesh(roundedBox(0.62, 0.1, 0.58, 0.12), mat, 0, 0.5, 0));
@@ -1103,6 +1031,7 @@ export function buildOffice(): Office {
   const stairs = new THREE.Group();
   buildExitStairs(stairs, groundColliders);
   buildBalconyPosts(stairs, groundColliders);
+  buildBalconyStairs(stairs, groundColliders);
   ground.add(mergeByMaterial(stairs));
   // The door, its frame and the EXIT sign over it.
   fixture(EXIT_DOOR.wall, EXIT_DOOR.u, (EXIT_DOOR.y1 + 0.7) / 2, EXIT_DOOR.width + 0.3, EXIT_DOOR.y1 + 0.7);
@@ -1116,6 +1045,9 @@ export function buildOffice(): Office {
   // Upstairs there's no way out on the west side: the doorway is wall like the rest of it.
   const plug = exitPlug(looks);
   group.add(plug.group);
+  // And no stairs down off the balcony: its railing runs all the way along.
+  const gate = balconyGate();
+  group.add(gate.group);
   // The rest of the building, above and below this floor.
   const tower = buildTower(colliders, night);
   group.add(tower.group);
@@ -1211,18 +1143,18 @@ export function buildOffice(): Office {
     fixture('north', def.x, 1.45, 1.4, 2.9);
   }
   /**
-   * A desk set up on one of your models (see shared/placed.ts): no desk of its own (the model is
-   * the desk), just where its worker sits, its laptop and the "+" while it's free. `deskTop` is how
-   * high the laptop goes (the model's surface there, once it's loaded).
+   * A desk put down in build mode (see shared/placed.ts): no desk of its own (the model, or the
+   * worker desk piece, is the desk), just where its worker sits, its laptop and the "+" while it's
+   * free. `deskTop` is how high the laptop goes (the model's surface there, once it's loaded).
    */
   const modelDesks = new Map<string, Interactable>();
-  const addModelDesk = (def: DeskDef & { seatY: number }, deskTop = 0.75) => {
+  const addModelDesk = (def: DeskDef & { seatY: number; laptopZ?: number; baseY?: number }, deskTop = 0.75) => {
     removeModelDesk(def.id);
     const group = new THREE.Group();
-    group.position.set(def.x, 0, def.z);
+    group.position.set(def.x, def.baseY ?? 0, def.z);
     group.rotation.y = def.rotY;
     const laptopAnchor = new THREE.Object3D();
-    laptopAnchor.position.set(0, deskTop, 0.31);
+    laptopAnchor.position.set(0, deskTop, def.laptopZ ?? 0.31);
     laptopAnchor.scale.setScalar(1.3);
     const seatAnchor = new THREE.Object3D();
     seatAnchor.position.set(0, Math.max(0, def.seatY - 0.05), 0.93);
@@ -1233,10 +1165,10 @@ export function buildOffice(): Office {
     const chair = new THREE.Group();
     const vacancyY = deskTop + 0.55;
     const vacancy = vacancyMarker(vacancyY);
-    vacancy.position.z = 0.31;
+    vacancy.position.z = def.laptopZ ?? 0.31;
     group.add(laptopAnchor, seatAnchor, stage, chair, vacancy);
     const seat = deskSeat(def, 1.25);
-    const it: Interactable = { kind: 'desk', deskId: def.id, x: seat.x, z: seat.z, radius: 1.3 };
+    const it: Interactable = { kind: 'desk', deskId: def.id, x: seat.x, z: seat.z, radius: 1.3, ...(def.baseY ? { y: def.baseY } : {}) };
     group.userData.interact = it;
     interactables.push(it);
     modelDesks.set(def.id, it);
@@ -1528,6 +1460,10 @@ export function buildOffice(): Office {
     const i = colliders.indexOf(plug.collider);
     if (index > 0 && i < 0) colliders.push(plug.collider);
     else if (index === 0 && i >= 0) colliders.splice(i, 1);
+    gate.group.visible = index > 0;
+    const g = colliders.indexOf(gate.collider);
+    if (index > 0 && g < 0) colliders.push(gate.collider);
+    else if (index === 0 && g >= 0) colliders.splice(g, 1);
     tower.set(index, count);
   };
   setLevel(0, 1);

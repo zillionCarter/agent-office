@@ -179,7 +179,7 @@ export function openAssetSetup(net: Net, a: AssetInfo) {
       const sc = draft.screen;
       const plane = new THREE.Mesh(new THREE.PlaneGeometry(sc.w, sc.h), new THREE.MeshBasicMaterial({ color: '#4f86f7', transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthTest: false }));
       plane.position.set(sc.x, sc.y, sc.z);
-      plane.rotation.y = sc.rotY;
+      plane.rotation.set(sc.tilt ?? 0, sc.rotY, 0, 'YXZ');
       markers.add(plane);
     }
     paintLists();
@@ -206,10 +206,13 @@ export function openAssetSetup(net: Net, a: AssetInfo) {
     // A worker faces the desk: the way you're looking, from behind their chair.
     else if (tool === 'desk') draft.desk = { x: p.x, y: p.y, z: p.z, rotY: rotY + Math.PI };
     else if (tool === 'screen' && hit) {
-      const n = hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld) : toCam.normalize();
+      // Flat on the surface where you clicked, whichever way it faces: upright, or leaning back like a laptop's lid.
+      const n = hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize() : toCam.normalize();
+      if (n.dot(toCam) < 0) n.negate();
       const face = Math.atan2(n.x, n.z);
+      const tilt = -Math.asin(Math.max(-1, Math.min(1, n.y)));
       const w = draft.screen?.w ?? Math.max(0.3, Math.min(size.x, size.z) * 0.8);
-      draft.screen = { x: p.x + n.x * 0.005, y: p.y, z: p.z + n.z * 0.005, w, h: draft.screen?.h ?? w * 0.5625, rotY: face };
+      draft.screen = { x: p.x + n.x * 0.004, y: p.y + n.y * 0.004, z: p.z + n.z * 0.004, w, h: draft.screen?.h ?? w * 0.5625, rotY: face, tilt };
     }
     paintMarkers();
   });
@@ -231,7 +234,7 @@ export function openAssetSetup(net: Net, a: AssetInfo) {
   const toolHelp: Record<Exclude<Tool, null>, string> = {
     seat: 'Click where someone sits (a cushion, a chair seat). They face the way you’re looking from: turn the model to face its front first.',
     desk: 'Stand behind where the worker sits (turn the model so you look at the desk from their chair), then click their chair, or the floor there. Their laptop goes on the desk in front of them.',
-    screen: 'Click the middle of the screen. Then size it below.',
+    screen: 'Click the middle of the screen: it lies flat on the surface you click, tilted the same. Then size it below.',
   };
   const help = h('p.setting-note', { style: 'margin:6px 0 0' });
   const paintTools = () => {
@@ -295,6 +298,8 @@ export function openAssetSetup(net: Net, a: AssetInfo) {
           turnBtn('⟳', () => (sc.rotY += Math.PI / 12)),
           turnBtn('▲', () => (sc.y += Math.max(0.01, sc.h / 20))),
           turnBtn('▼', () => (sc.y -= Math.max(0.01, sc.h / 20))),
+          turnBtn('↶ tip', () => (sc.tilt = (sc.tilt ?? 0) - Math.PI / 36)),
+          turnBtn('↷ tip', () => (sc.tilt = (sc.tilt ?? 0) + Math.PI / 36)),
           turnBtn('🗑', () => (draft.screen = undefined)),
         ),
       );

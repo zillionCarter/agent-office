@@ -15,6 +15,8 @@ import { Changes } from './changes.js';
 import { Decor } from './decor.js';
 import { Furniture } from './furniture.js';
 import { placedAll, type PlacedDesk } from '../shared/placed.js';
+import type { FurnitureItem } from '../shared/furniture.js';
+import { STREET_Y } from '../shared/layout.js';
 import type { AssetInfo } from '../shared/assets.js';
 import { Docs } from './docs.js';
 import { Dog } from './dog.js';
@@ -43,6 +45,10 @@ export interface FloorContext {
   prompts: PromptSource;
   /** Your own models and pictures, the building's library (see assets.ts). */
   assets(): AssetInfo[];
+  /** What's been built on the lot beside the building, whose desks and seats are the bottom floor's. */
+  lot(): FurnitureItem[];
+  /** Whether `floor` is the bottom one: the one whose exit door opens onto the street and the lot. */
+  isBottom(floor: Floor): boolean;
   /** To everyone on this floor. */
   emit(floor: Floor, msg: ServerMsg, droppable?: boolean): void;
   toast(floor: Floor, text: string, level?: ToastLevel): void;
@@ -327,7 +333,11 @@ export class Floor {
 
   /** The desks and seats set up on the models put down on this floor (see shared/placed.ts). */
   placed() {
-    return placedAll(this.furniture.get().items, this.ctx.assets());
+    const inside = placedAll(this.furniture.get().items, this.ctx.assets());
+    if (!this.ctx.isBottom(this)) return inside;
+    // The lot's too: its people walk out to it from here, and its workers sit out there.
+    const out = placedAll(this.ctx.lot(), this.ctx.assets(), STREET_Y);
+    return { desks: [...inside.desks, ...out.desks], seats: [...inside.seats, ...out.seats] };
   }
 
   /** A desk on one of this floor's models, by its id. */

@@ -17,7 +17,10 @@ export interface AssetSeat {
   rotY: number;
 }
 
-/** A screen on a model (a TV, a monitor): its middle, its size, and the way it faces (around y; 0 faces +z). */
+/**
+ * A screen on a model (a TV, a monitor, a laptop's lid): its middle, its size, and the way it faces:
+ * turned `rotY` around y (0 faces +z), then tipped back `tilt` (a laptop lid leans back).
+ */
 export interface AssetScreen {
   x: number;
   y: number;
@@ -25,6 +28,7 @@ export interface AssetScreen {
   w: number;
   h: number;
   rotY: number;
+  tilt?: number;
 }
 
 export interface AssetInfo {
@@ -70,7 +74,7 @@ export function cleanAssetPatch(p: Partial<AssetInfo>): Partial<AssetInfo> {
   if ('desk' in p) out.desk = p.desk ? seat(p.desk) : undefined;
   if ('screen' in p) {
     const s = p.screen as Partial<AssetScreen> | undefined;
-    out.screen = s && typeof s === 'object' ? { ...seat(s)!, w: num(s.w, 0.05, 1e3, 1), h: num(s.h, 0.05, 1e3, 0.6) } : undefined;
+    out.screen = s && typeof s === 'object' ? { ...seat(s)!, w: num(s.w, 0.05, 1e3, 1), h: num(s.h, 0.05, 1e3, 0.6), tilt: num(s.tilt, -1.6, 1.6, 0) } : undefined;
   }
   return out;
 }

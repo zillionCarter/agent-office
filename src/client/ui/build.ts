@@ -36,6 +36,8 @@ export interface BuildOptions {
   lot: FurnitureView;
   /** How far below the floor you're on the street is (where the lot is). */
   street(): number;
+  /** You're down on the street (by the lot), not up on a floor. */
+  outside(): boolean;
   /** Opens or closes the catalog: the player lets go of the mouse while it's open, and takes it back after. */
   setCatalog(open: boolean): void;
   onToggle(active: boolean): void;
@@ -233,7 +235,7 @@ export class BuildMode {
   }
 
   private paintCatalog() {
-    const groups = ['Walls', 'Furniture', 'Decor'] as const;
+    const groups = ['Walls', 'Furniture', 'Lights', 'Decor'] as const;
     const close = h('button.btn', { type: 'button' }, 'Close');
     close.addEventListener('click', () => this.closeCatalog());
     const done = h('button.btn.primary', { type: 'button' }, '✅ Stop building');
@@ -247,10 +249,12 @@ export class BuildMode {
       this.closeCatalog();
       openLibrary({ net: this.o.net, hold: (a) => this.holdAsset(a) });
     });
-    const floor = store.furniture.floor;
+    // Out on the street, the floor you lay is the lot's; up on a floor, that floor's.
+    const lot = this.o.outside();
+    const floor = lot ? store.lot.floor : store.furniture.floor;
     const floorBtns = FLOOR_STYLES.filter((f) => f.style !== 'image').map((f) => {
-      const b = h('button.build-item', { type: 'button', class: floor?.style === f.style ? 'on' : '', title: `Lay ${f.label.toLowerCase()} on this floor` }, h('span.build-swatch', { style: `background:${floor?.style === f.style && floor.color ? floor.color : f.color}` }), f.label);
-      b.addEventListener('click', () => this.o.net.send({ t: 'furn.floor', floor: { style: f.style, color: floor?.style === f.style ? floor.color : undefined } }));
+      const b = h('button.build-item', { type: 'button', class: floor?.style === f.style ? 'on' : '', title: `Lay ${f.label.toLowerCase()} on ${lot ? 'the lot' : 'this floor'}` }, h('span.build-swatch', { style: `background:${floor?.style === f.style && floor.color ? floor.color : f.color}` }), f.label);
+      b.addEventListener('click', () => this.o.net.send({ t: 'furn.floor', floor: { style: f.style, color: floor?.style === f.style ? floor.color : undefined }, lot }));
       return b;
     });
     const floorColors = floor && floor.style !== 'image'
@@ -259,7 +263,7 @@ export class BuildMode {
           {},
           ...FURNITURE_COLORS.map((c) => {
             const sw = h('button.swatch', { type: 'button', style: `background:${c}`, class: floor.color === c ? 'sel' : '', 'aria-label': `Floor color ${c}`, title: c });
-            sw.addEventListener('click', () => this.o.net.send({ t: 'furn.floor', floor: { style: floor.style, color: c } }));
+            sw.addEventListener('click', () => this.o.net.send({ t: 'furn.floor', floor: { style: floor.style, color: c }, lot }));
             return sw;
           }),
         )
@@ -267,11 +271,11 @@ export class BuildMode {
     const pictures = store.assets.filter((a) => a.type === 'image');
     const picBtns = pictures.map((a) => {
       const b = h('button.build-item', { type: 'button', class: floor?.image === a.id ? 'on' : '', title: `Lay ${a.name} as the floor` }, h('span', {}, '🖼️'), a.name);
-      b.addEventListener('click', () => this.o.net.send({ t: 'furn.floor', floor: { style: 'image', image: a.id, tile: 2 } }));
+      b.addEventListener('click', () => this.o.net.send({ t: 'furn.floor', floor: { style: 'image', image: a.id, tile: 2 }, lot }));
       return b;
     });
-    const planks = h('button.btn', { type: 'button', title: 'The office’s own floor back' }, '↩︎ Office floor');
-    planks.addEventListener('click', () => this.o.net.send({ t: 'furn.floor', floor: null }));
+    const planks = h('button.btn', { type: 'button', title: lot ? 'Bare ground again' : 'The office’s own floor back' }, lot ? '↩︎ Bare ground' : '↩︎ Office floor');
+    planks.addEventListener('click', () => this.o.net.send({ t: 'furn.floor', floor: null, lot }));
     this.catalog.replaceChildren(
       h('h3', {}, '🛠️ Catalog'),
       h('div.build-group', {}, 'Your models'),
@@ -300,7 +304,7 @@ export class BuildMode {
       ]),
       h('div.build-group', {}, 'Sign text'),
       signIn,
-      h('div.build-group', {}, 'Floor'),
+      h('div.build-group', {}, lot ? 'Floor of the lot' : 'Floor'),
       h('div.build-items', {}, ...floorBtns, ...picBtns),
       ...(floorColors ? [floorColors] : []),
       planks,

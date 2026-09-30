@@ -1128,7 +1128,7 @@ export type ClientMsg =
   | { t: 'furn.update'; id: string; item: Partial<FurniturePlacement>; lot?: boolean }
   | { t: 'furn.remove'; id: string; lot?: boolean }
   /** Build mode: lay a new floor on your floor, or put the office's back (null). */
-  | { t: 'furn.floor'; floor: FloorStyle | null }
+  | { t: 'furn.floor'; floor: FloorStyle | null; lot?: boolean }
   /** Your own models and pictures: rename one, size it, set up its seats, desk or screen. */
   | { t: 'asset.update'; id: string; asset: Partial<AssetInfo> }
   /** Take one out of the library (and off every floor). */

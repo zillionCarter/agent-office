@@ -26,6 +26,9 @@ interface Screen {
   it: Interactable;
   center: THREE.Vector3;
   normal: THREE.Vector3;
+  /** Showing the live page, and since when it's wanted the other way (see render). */
+  live: boolean;
+  since?: number;
 }
 
 export class ScreenLayer {
@@ -35,18 +38,32 @@ export class ScreenLayer {
   private screens = new Map<string, Screen>();
   private ray = new THREE.Raycaster();
   private toScreen = new THREE.Vector3();
+  /** How high the ground the screens' models stand on is (the lot's is the street). */
+  private base = 0;
 
   constructor(
     host: HTMLElement,
     private interactables: Interactable[],
+    base = 0,
   ) {
+    this.base = base;
     const el = this.renderer.domElement;
     el.classList.add('screen-layer');
     host.append(el);
   }
 
+  private last: [FurnitureItem[], AssetInfo[]] = [[], []];
+
+  /** The ground moved (the lot, seen from another floor): the screens go with it. */
+  setBase(y: number) {
+    if (y === this.base) return;
+    this.base = y;
+    this.apply(...this.last);
+  }
+
   /** The screens on the floor's models, kept in step with its furniture and the library. */
   apply(items: FurnitureItem[], assets: AssetInfo[]) {
+    this.last = [items, assets];
     const byId = new Map(assets.map((a) => [a.id, a]));
     const seen = new Set<string>();
     for (const it of items) {
@@ -55,20 +72,22 @@ export class ScreenLayer {
       seen.add(it.id);
       const sc = a.screen;
       const k = it.scale ?? 1;
-      const key = JSON.stringify([it.x, it.z, it.rotY, k, sc, it.url]);
+      const key = JSON.stringify([it.x, it.z, it.rotY, k, sc, it.url, this.base]);
       const had = this.screens.get(it.id);
       if (had?.key === key) continue;
       if (had) this.drop(it.id);
       const at = placedSpot(it, sc);
       const w = sc.w * k;
       const h = sc.h * k;
-      const center = new THREE.Vector3(at.x, at.y, at.z);
-      const normal = new THREE.Vector3(Math.sin(at.rotY), 0, Math.cos(at.rotY));
+      const tilt = sc.tilt ?? 0;
+      const turn = new THREE.Euler(tilt, at.rotY, 0, 'YXZ');
+      const center = new THREE.Vector3(at.x, at.y + this.base, at.z);
+      const normal = new THREE.Vector3(0, 0, 1).applyEuler(turn);
       // A little off the model's surface, so it's never inside it.
       center.addScaledVector(normal, 0.004);
       const plane = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: this.cover(it.url), toneMapped: false }));
       plane.position.copy(center);
-      plane.rotation.y = at.rotY;
+      plane.rotation.copy(turn);
       plane.userData.screenId = it.id;
       this.group.add(plane);
       const frame = document.createElement('iframe');
@@ -81,14 +100,14 @@ export class ScreenLayer {
       frame.tabIndex = -1;
       const css = new CSS3DObject(frame);
       css.position.copy(center);
-      css.rotation.y = at.rotY;
+      css.rotation.copy(turn);
       css.scale.setScalar(w / PAGE_PX);
       css.visible = false;
       this.css.add(css);
-      const it2: Interactable = { kind: 'screen', screenId: it.id, x: at.x + normal.x * 0.8, z: at.z + normal.z * 0.8, radius: Math.max(1.6, w), y: undefined };
+      const it2: Interactable = { kind: 'screen', screenId: it.id, x: at.x + normal.x * 0.8, z: at.z + normal.z * 0.8, radius: Math.max(1.6, w), ...(this.base ? { y: this.base } : {}) };
       plane.userData.interact = it2;
       this.interactables.push(it2);
-      this.screens.set(it.id, { key, itemId: it.id, url: it.url, plane, css, frame, it: it2, center, normal });
+      this.screens.set(it.id, { key, itemId: it.id, url: it.url, plane, css, frame, it: it2, center, normal, live: false });
     }
     for (const id of [...this.screens.keys()]) if (!seen.has(id)) this.drop(id);
   }
@@ -118,9 +137,20 @@ export class ScreenLayer {
         this.ray.far = dist - 0.05;
         // Sprites (name tags) need the camera to be hit-tested, and don't hide anything anyway.
         this.ray.camera = camera;
-        const hit = this.ray.intersectObjects(occluders, true).find((x) => x.object !== s.plane && x.object.visible && !(x.object as THREE.Sprite).isSprite);
+        // Not the model the screen is on (its bezel, its stand), nor a name tag.
+        const hit = this.ray.intersectObjects(occluders, true).find((x) => x.object !== s.plane && x.object.visible && !(x.object as THREE.Sprite).isSprite && x.object.userData.furnitureId !== s.itemId);
         if (hit) live = false;
       }
+      // A moment either way before it changes, so a glancing look doesn't make it flicker.
+      const now = performance.now();
+      if (live !== s.live) {
+        s.since ??= now;
+        if (now - s.since < (live ? 120 : 400)) live = s.live;
+        else {
+          s.live = live;
+          s.since = undefined;
+        }
+      } else s.since = undefined;
       if (live && !s.frame.src && s.url) s.frame.src = s.url;
       s.css.visible = live;
       s.frame.style.display = live ? 'block' : 'none';
@@ -143,7 +173,7 @@ export class ScreenLayer {
     } catch {
       // not a link
     }
-    const { tex } = textTexture(host ? `🌐 ${host}` : '🖥️ No page yet · E to set one', { bg: '#11151f', color: '#e9ecef', size: 44 });
+    const { tex } = textTexture(host ? `🌐 ${host}` : '🖥️ Look here and press E to pick a page', { bg: '#11151f', color: '#e9ecef', size: 44 });
     return tex;
   }
 
