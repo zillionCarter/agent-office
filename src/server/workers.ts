@@ -13,7 +13,7 @@ import { FAILS_TO_DESPAIR, outputFailed, toolAction } from '../shared/actions.js
 import { FLAG_BOLD, FLAG_DIM, FLAG_INVERSE, RGB_FLAG, isAgentEffort, isClaudeModel } from '../shared/protocol.js';
 import { ROLE_BY_ID, isWorkerRole, type WorkerRole } from '../shared/roles.js';
 import { Worktrees, describeWork, type WorktreeCleanup, type WorktreeState } from './worktrees.js';
-import { DESK_BY_ID, STATION_AGENT, nextFreeSeat } from '../shared/layout.js';
+import { DESK_BY_ID, STATION_AGENT, nextFreeSeat, type DeskDef } from '../shared/layout.js';
 import { claudeProjectDir } from './sessions.js';
 import { QUEUE_AGENT_DISALLOWED_TOOLS, stationBrief } from './stations.js';
 import { officePrompt, type PromptSource } from './prompts.js';
@@ -180,6 +180,8 @@ export class WorkerManager {
     private capacity?: Capacity,
     /** The office's prompts and the worker everyone starts on, as set in ⚙️ Settings (see prompts.ts). */
     private prompts?: PromptSource,
+    /** Desks on the floor besides the office's own: the ones set up on models put down there (see shared/placed.ts). */
+    private extraSeat?: (id: string) => DeskDef | undefined,
   ) {
     this.defaultProvider = configuredProvider(agentCmd);
     this.trees = new Worktrees(dir);
@@ -281,7 +283,7 @@ export class WorkerManager {
     if (modelError) return modelError;
     const effortError = validateWorkerEffort(kind, selectedProvider, effort);
     if (effortError) return effortError;
-    const seat = DESK_BY_ID.get(deskId);
+    const seat = this.seatDef(deskId);
     if (!seat) return 'Unknown desk';
     if (this.deskOccupied(deskId)) return seat.station ? `The ${STATION_AGENT[seat.station].name} is already there` : `That ${seat.beanbag ? 'bean bag' : 'desk'} is taken`;
     if (kind === 'shell' && seat.station) return 'A board agent is always an agent, not a shell';
@@ -339,6 +341,26 @@ export class WorkerManager {
     return info;
   }
 
+  /** Any place a worker can be on this floor: the office's own, or a desk on one of its models. */
+  seatDef(id: string): DeskDef | undefined {
+    return DESK_BY_ID.get(id) ?? this.extraSeat?.(id);
+  }
+
+  /**
+   * Workers at desks on models that have gone (taken away, or no longer set up as a desk) move to
+   * the first free desk or bean bag, or stay put, unseen, until one frees up.
+   */
+  rehome() {
+    for (const w of this.workers.values()) {
+      if (this.seatDef(w.info.deskId)) continue;
+      const seat = this.freeSeat();
+      if (!seat) continue;
+      w.info.deskId = seat;
+      this.emitUpdate(w);
+    }
+    this.persist();
+  }
+
   /** The first free desk (then bean bag) for a worker who arrives without anyone picking one. */
   freeSeat(): string | undefined {
     return nextFreeSeat((id) => this.deskOccupied(id))?.id;
@@ -380,8 +402,8 @@ export class WorkerManager {
   reseat(id: string, deskId: string): string | undefined {
     const w = this.workers.get(id);
     if (!w) return 'No such worker';
-    const from = DESK_BY_ID.get(w.info.deskId);
-    const to = DESK_BY_ID.get(deskId);
+    const from = this.seatDef(w.info.deskId);
+    const to = this.seatDef(deskId);
     if (!to) return 'Unknown desk';
     if (from?.station || w.info.meeting) return `${w.info.name} stays where it is`;
     if (to.station || to.room) return 'Only a desk, a bean bag or reception will do';
@@ -407,7 +429,7 @@ export class WorkerManager {
    * not today's, so the tracker starts from the end of the transcript.
    */
   carryOn(deskId: string, by: string, a: { sessionId: string; transcript: string; name?: string; color?: string; role?: WorkerRole; model?: string; effort?: AgentEffort; title?: string; activity?: string; outfit?: WorkerOutfit; instructions?: string }): WorkerInfo | string {
-    const seat = DESK_BY_ID.get(deskId);
+    const seat = this.seatDef(deskId);
     if (!seat) return 'Unknown desk';
     if (seat.station || seat.room) return 'Only a desk or a bean bag will do';
     if (this.deskOccupied(deskId)) return `That ${seat.beanbag ? 'bean bag' : 'desk'} is taken`;
@@ -463,7 +485,7 @@ export class WorkerManager {
     if (w.pty) return 'Worker is already running';
     w.info.status = 'starting';
     w.info.exitCode = undefined;
-    const station = DESK_BY_ID.get(w.info.deskId)?.station;
+    const station = this.seatDef(w.info.deskId)?.station;
     // A board agent with no session to carry on starts over, so it needs telling what it's for again.
     const first = prompt && station && !w.info.sessionId ? `${stationBrief(station, this.prompts)}\n\n${prompt}` : prompt;
     if (prompt) {
@@ -483,7 +505,7 @@ export class WorkerManager {
    * the agent and whether it was just hired.
    */
   station(deskId: string, by: string, text: string): { info: WorkerInfo; hired: boolean } | string {
-    if (!DESK_BY_ID.get(deskId)?.station) return 'There is no agent to ask there';
+    if (!this.seatDef(deskId)?.station) return 'There is no agent to ask there';
     const clean = text.replace(/\r\n?/g, '\n').trim();
     if (!clean) return 'Empty prompt';
     const w = [...this.workers.values()].find((x) => x.info.deskId === deskId);
@@ -1026,7 +1048,7 @@ export class WorkerManager {
     const isOpenCode = !isShell && provider === 'opencode';
     const isCodex = !isShell && provider === 'codex';
     const configured = !isShell && provider === this.defaultProvider;
-    const station = DESK_BY_ID.get(info.deskId)?.station;
+    const station = this.seatDef(info.deskId)?.station;
     const command = this.command(info);
     const commandPath = isShell ? undefined : configured ? this.agentPath : resolveCommand(command);
     let args = isShell ? (WIN && !process.env.SHELL ? [] : ['-l']) : configured ? [...this.agentArgs] : [];
@@ -1075,7 +1097,7 @@ export class WorkerManager {
       AGENT_OFFICE_HOOK_TOKEN: w.hookToken,
     });
     // A board agent (or whoever's at reception) reaches the queue with the office-queue command, whichever agent it runs.
-    if ((station || DESK_BY_ID.get(info.deskId)?.reception) && this.queueBin) {
+    if ((station || this.seatDef(info.deskId)?.reception) && this.queueBin) {
       // Windows spells it Path.
       const key = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH';
       env[key] = [this.queueBin, env[key]].filter(Boolean).join(path.delimiter);
@@ -1501,7 +1523,7 @@ process.stdin.on('end', () => {
     try {
       const saved = JSON.parse(readFileSync(this.statePath, 'utf8')) as (Partial<WorkerInfo> & { tracker?: unknown; codexTranscript?: unknown; hookToken?: unknown; pty?: any; midTurn?: unknown })[];
       for (const s of saved) {
-        if (!s.id || !s.deskId || !DESK_BY_ID.has(s.deskId) || this.deskOccupied(s.deskId)) continue;
+        if (!s.id || !s.deskId || !!!this.seatDef(s.deskId) || this.deskOccupied(s.deskId)) continue;
         const tracker = restoreTracker(s.tracker);
         const provider = s.kind === 'shell'
           ? undefined
@@ -1538,7 +1560,7 @@ process.stdin.on('end', () => {
           rows: 30,
           viewers: [],
           viewerIds: [],
-          meeting: typeof s.meeting === 'string' && DESK_BY_ID.get(s.deskId)?.room ? s.meeting : undefined,
+          meeting: typeof s.meeting === 'string' && this.seatDef(s.deskId)?.room ? s.meeting : undefined,
         };
         const w = newWorker(info, tracker, typeof s.hookToken === 'string' && s.hookToken ? s.hookToken : undefined);
         if (provider === 'codex' && typeof s.codexTranscript === 'string') w.codexTranscript = s.codexTranscript;

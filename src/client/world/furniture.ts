@@ -4,6 +4,9 @@ import { mesh, roundedBox, textPlane, toon } from './toon';
 import { plant, type Collider, type Office } from './office';
 import { modelInstance, solidColliders } from './assets';
 import type { AssetInfo } from '../../shared/assets';
+import { DESK_BY_ID, SEATING_BY_ID } from '../../shared/layout';
+import { placedAll, type PlacedDesk } from '../../shared/placed';
+import type { Interactable } from './office';
 
 // What people add to a floor in build mode (see shared/furniture.ts), built in the office: walls and
 // glass to make offices, dividers, couches, plants… Each piece is its own group, its footprint turned
@@ -166,6 +169,13 @@ export function pieceColliders(p: FurniturePlacement): Collider[] {
 export class FurnitureView {
   readonly group = new THREE.Group();
   private pieces = new Map<string, { key: string; obj: THREE.Group; colliders: Collider[] }>();
+  /** The desks and seats on this floor's models, as last put in (see shared/placed.ts). */
+  private modelDesks = new Map<string, string>();
+  private modelSeats = new Map<string, { key: string; it: Interactable }>();
+  /** How high each model desk's laptop goes, found on its model once it's loaded, by desk id. */
+  private deskTops = new Map<string, number>();
+  /** Called when the desks on models change, so workers find their seats. */
+  onDesks: (() => void) | null = null;
 
   constructor(
     private colliders: Collider[],
@@ -206,6 +216,70 @@ export class FurnitureView {
     }
     for (const id of [...this.pieces.keys()]) if (!seen.has(id)) this.drop(id);
     for (const id of MOVABLE_DESKS) this.office.moveDesk(id, state.desks[id]);
+    this.placeSeats(state);
+  }
+
+  /**
+   * The desks and seats set up on the models on the floor: each desk a place a worker can be hired
+   * at (in DESK_BY_ID, which only ever holds the floor you're on here), each seat a place to sit.
+   */
+  private placeSeats(state: FurnitureState) {
+    const { desks, seats } = placedAll(state.items, this.assets());
+    let changed = false;
+    const deskKeys = new Map(desks.map((d) => [d.id, JSON.stringify([d.x, d.z, d.rotY, d.seatY, this.deskTops.get(d.id)])]));
+    for (const [id] of this.modelDesks) {
+      if (deskKeys.has(id)) continue;
+      this.office.removeModelDesk(id);
+      DESK_BY_ID.delete(id);
+      this.modelDesks.delete(id);
+      changed = true;
+    }
+    for (const d of desks) {
+      const key = deskKeys.get(d.id)!;
+      if (this.modelDesks.get(d.id) === key) continue;
+      this.office.addModelDesk(d, this.deskTops.get(d.id));
+      DESK_BY_ID.set(d.id, d);
+      this.modelDesks.set(d.id, key);
+      changed = true;
+      if (!this.deskTops.has(d.id)) this.findDeskTop(d);
+    }
+    const seatKeys = new Map(seats.map((s) => [s.id, JSON.stringify([s.x, s.z, s.rotY, s.hips])]));
+    for (const [id, s] of this.modelSeats) {
+      if (seatKeys.get(id) === s.key) continue;
+      SEATING_BY_ID.delete(id);
+      const i = this.office.interactables.indexOf(s.it);
+      if (i >= 0) this.office.interactables.splice(i, 1);
+      this.modelSeats.delete(id);
+    }
+    for (const s of seats) {
+      if (this.modelSeats.has(s.id)) continue;
+      SEATING_BY_ID.set(s.id, s);
+      const it: Interactable = { kind: 'seat', seatId: s.id, x: s.x, z: s.z, radius: 1.1 };
+      this.office.interactables.push(it);
+      this.modelSeats.set(s.id, { key: seatKeys.get(s.id)!, it });
+    }
+    if (changed) this.onDesks?.();
+  }
+
+  /** Once a desk's model is in, its laptop goes on the model's surface in front of the worker. */
+  private findDeskTop(d: PlacedDesk) {
+    const piece = this.pieces.get(d.item);
+    if (!piece) return;
+    const tryIt = (left: number) => {
+      const obj = this.pieces.get(d.item)?.obj;
+      if (!obj) return;
+      if (obj.userData.placeholder?.parent && left > 0) return void setTimeout(() => tryIt(left - 1), 300);
+      obj.updateMatrixWorld(true);
+      // Straight down onto the model, where the laptop would sit in front of the worker.
+      const ahead = new THREE.Vector3(d.x + Math.sin(d.rotY) * 0.31, 3, d.z + Math.cos(d.rotY) * 0.31);
+      const hit = new THREE.Raycaster(ahead, new THREE.Vector3(0, -1, 0), 0, 3).intersectObject(obj, true)[0];
+      const top = hit ? Math.round(hit.point.y * 100) / 100 : 0.75;
+      this.deskTops.set(d.id, top);
+      this.office.addModelDesk(d, top);
+      this.modelDesks.set(d.id, JSON.stringify([d.x, d.z, d.rotY, d.seatY, top]));
+      this.onDesks?.();
+    };
+    tryIt(40);
   }
 
   /** The piece's scene object, for build mode to highlight. */

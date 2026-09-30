@@ -571,6 +571,7 @@ export async function startServer(cfg: Config) {
   };
 
   const floorContext: FloorContext = {
+    assets: () => assetLib.all(),
     agentCmd: cfg.agentCmd,
     agentArgs: cfg.agentArgs,
     hook: { url: `http://127.0.0.1:${hookPort}`, token: '' },
@@ -1185,7 +1186,11 @@ export async function startServer(cfg: Config) {
   };
 
   const decorChanged = (floor: Floor) => toFloor(floor, { t: 'decor', items: floor.decor.list() });
-  const furnitureChanged = (floor: Floor) => toFloor(floor, { t: 'furniture', furniture: floor.furniture.get() });
+  const furnitureChanged = (floor: Floor) => {
+    toFloor(floor, { t: 'furniture', furniture: floor.furniture.get() });
+    // A model with a desk taken away: whoever sat there moves to another desk.
+    floor.workers.rehome();
+  };
   const ballChanged = (floor: Floor) => toFloor(floor, { t: 'ball', ball: floor.court.state() });
   const jukeboxChanged = (floor: Floor) => toFloor(floor, { t: 'jukebox', state: floor.jukebox.state() });
   const teamChanged = async () => broadcast({ t: 'team', state: await team.state() });
@@ -1373,7 +1378,9 @@ export async function startServer(cfg: Config) {
         // Everyone sees them sit down (or get up), and anyone who comes in later finds them sitting.
         // Only on a seat where they are: the roof's up on the roof, the office's on a floor.
         const key = str(msg.seat, 40);
-        const seat = seatHere(key, c.peer.floor === ROOF) ? key : undefined;
+        // Or one set up on a model put down on your floor (see shared/placed.ts).
+        const onModel = floorOf(c)?.placed().seats.some((m) => `${m.id}:0` === key);
+        const seat = seatHere(key, c.peer.floor === ROOF) || onModel ? key : undefined;
         if (seat === c.peer.seat) break;
         if (seat) c.peer.seat = seat;
         else delete c.peer.seat;
@@ -2100,6 +2107,7 @@ export async function startServer(cfg: Config) {
         const r = assetLib.update(str(msg.id, 20), msg.asset && typeof msg.asset === 'object' ? msg.asset : {});
         if (typeof r === 'string') return warn(c, r);
         broadcast({ t: 'assets', assets: assetLib.all() });
+        for (const f of floors.values()) f.workers.rehome();
         break;
       }
       case 'asset.remove': {

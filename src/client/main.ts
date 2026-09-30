@@ -304,6 +304,17 @@ const BUILD_CENTER = new THREE.Vector2(0, 0);
 const furniture = new FurnitureView(office.colliders, office, () => store.assets);
 office.group.add(furniture.group);
 store.on('furniture', () => furniture.apply(store.furniture));
+// A desk on a model came (or was rebuilt): whoever works there sits down at it.
+furniture.onDesks = () => {
+  for (const v of workerViews.values()) {
+    const desk = office.desks.get(v.deskId);
+    if (!desk || v.model.root.parent === desk.seatAnchor) continue;
+    desk.seatAnchor.add(v.model.root);
+    desk.laptopAnchor.add(v.laptop.root);
+    v.model.setPropSpot(v.model.root.worldToLocal(desk.laptopAnchor.localToWorld(new THREE.Vector3(0.64, 0.5, -0.1))));
+  }
+  syncWorkers();
+};
 // The floor's own flooring, laid in build mode: a style, or one of your pictures (loaded once).
 const floorPictures = new Map<string, Promise<HTMLImageElement>>();
 const layFloor = () => {

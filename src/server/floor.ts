@@ -14,6 +14,8 @@ import { TaskQueue } from './queue.js';
 import { Changes } from './changes.js';
 import { Decor } from './decor.js';
 import { Furniture } from './furniture.js';
+import { placedAll, type PlacedDesk } from '../shared/placed.js';
+import type { AssetInfo } from '../shared/assets.js';
 import { Docs } from './docs.js';
 import { Dog } from './dog.js';
 import { Court } from './court.js';
@@ -39,6 +41,8 @@ export interface FloorContext {
   capacity: Capacity;
   /** The office's prompts and the worker everyone starts on, as set in ⚙️ Settings. */
   prompts: PromptSource;
+  /** Your own models and pictures, the building's library (see assets.ts). */
+  assets(): AssetInfo[];
   /** To everyone on this floor. */
   emit(floor: Floor, msg: ServerMsg, droppable?: boolean): void;
   toast(floor: Floor, text: string, level?: ToastLevel): void;
@@ -129,10 +133,13 @@ export class Floor {
     this.project = projectInfo(def.dir, def.name, ctx.agentCmd, ctx.agentArgs);
     this.docs = new Docs(def.dir);
     this.mailbox = new Mailbox(dataDir);
+    // Before the workers, who may be sitting at a desk on one of its models.
+    this.furniture = new Furniture(dataDir);
 
     // Before the workers, so it hears about the ones who wake up needing input.
     this.dog = new Dog(def.id, dataDir, {
       workers: () => this.workers?.list() ?? [],
+      seat: (id) => this.modelDesk(id),
       people: () => ctx.peers(this),
       send: (dog) => ctx.emit(this, { t: 'dog', dog }),
     });
@@ -169,6 +176,7 @@ export class Floor {
       ctx.ledger,
       ctx.capacity,
       ctx.prompts,
+      (id) => this.modelDesk(id),
     );
     if (def.kind === 'assistant') this.workers.defaultRole = 'assistant';
 
@@ -252,7 +260,6 @@ export class Floor {
     );
 
     this.decor = new Decor(dataDir);
-    this.furniture = new Furniture(dataDir);
     this.jukebox = new Jukebox(dataDir);
     this.whiteboard = new Whiteboard(dataDir);
     this.ready = this.workers.start();
@@ -316,6 +323,17 @@ export class Floor {
       waiting: ws.filter((w) => w.kind === 'agent' && (w.status === 'needs_input' || (w.status === 'done' && !w.acked))).length,
       people: this.ctx.people(this),
     };
+  }
+
+  /** The desks and seats set up on the models put down on this floor (see shared/placed.ts). */
+  placed() {
+    return placedAll(this.furniture.get().items, this.ctx.assets());
+  }
+
+  /** A desk on one of this floor's models, by its id. */
+  modelDesk(id: string): PlacedDesk | undefined {
+    if (!id.startsWith('a-')) return undefined;
+    return this.placed().desks.find((d) => d.id === id);
   }
 
   /** With `keep` (a restart), the workers' terminals keep running for the next office to pick up. */

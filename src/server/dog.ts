@@ -36,6 +36,8 @@ type Mode = 'lounge' | 'nap' | 'wander' | 'follow' | 'bark' | 'pet';
 
 export interface DogEnv {
   workers(): WorkerInfo[];
+  /** Where a worker's desk is: the office's own, or one on a model put down on the floor. */
+  seat?(id: string): DeskDef | undefined;
   /** Everyone on this floor, where they stand now. */
   people(): PeerInfo[];
   /** To everyone on this floor. */
@@ -271,7 +273,7 @@ export class Dog {
 
   /** Curls up under a busy worker's desk, at its feet. */
   private nap(w: WorkerInfo) {
-    const desk = DESK_BY_ID.get(w.deskId)!;
+    const desk = (DESK_BY_ID.get(w.deskId) ?? this.env.seat?.(w.deskId))!;
     this.mode = 'nap';
     let side = this.sideOf(desk);
     // A bean bag has no desk to get under, so it curls up beside it, on whichever side has room.
@@ -315,7 +317,7 @@ export class Dog {
 
   /** Runs to the desk of a worker that needs input, and barks at it. */
   private barkAt(w: WorkerInfo) {
-    const desk = DESK_BY_ID.get(w.deskId)!;
+    const desk = (DESK_BY_ID.get(w.deskId) ?? this.env.seat?.(w.deskId))!;
     const already = this.mode === 'bark' && this.leg.workerId === w.id;
     this.mode = 'bark';
     this.follow = undefined;

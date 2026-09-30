@@ -94,6 +94,9 @@ export interface Office {
   jukebox: JukeboxView;
   /** The arcade cabinet in the lounge, where BLOCKFALL plays (ui/cabinet.ts). */
   cabinet: CabinetModel;
+  /** A desk set up on one of your models, where its worker sits and its laptop goes (see shared/placed.ts). */
+  addModelDesk(def: DeskDef & { seatY: number }, deskTop?: number): void;
+  removeModelDesk(id: string): void;
   /** Lays the room's floor as build mode set it on this floor (see FLOOR_STYLES); none puts the planks back. */
   setFlooring(style?: FloorStyle, image?: HTMLImageElement): void;
   /** Moves a desk (or the reception desk) where build mode put it on this floor; none puts it back. */
@@ -1205,6 +1208,51 @@ export function buildOffice(): Office {
     // The agent, its name tag and the card over its head, up against the wall.
     fixture('north', def.x, 1.45, 1.4, 2.9);
   }
+  /**
+   * A desk set up on one of your models (see shared/placed.ts): no desk of its own (the model is
+   * the desk), just where its worker sits, its laptop and the "+" while it's free. `deskTop` is how
+   * high the laptop goes (the model's surface there, once it's loaded).
+   */
+  const modelDesks = new Map<string, Interactable>();
+  const addModelDesk = (def: DeskDef & { seatY: number }, deskTop = 0.75) => {
+    removeModelDesk(def.id);
+    const group = new THREE.Group();
+    group.position.set(def.x, 0, def.z);
+    group.rotation.y = def.rotY;
+    const laptopAnchor = new THREE.Object3D();
+    laptopAnchor.position.set(0, deskTop, 0.31);
+    laptopAnchor.scale.setScalar(1.3);
+    const seatAnchor = new THREE.Object3D();
+    seatAnchor.position.set(0, Math.max(0, def.seatY - 0.05), 0.93);
+    seatAnchor.rotation.y = Math.PI;
+    seatAnchor.scale.setScalar(0.82);
+    const stage = new THREE.Object3D();
+    stage.position.set(0.72, deskTop - 0.07, 0.5);
+    const chair = new THREE.Group();
+    const vacancyY = deskTop + 0.55;
+    const vacancy = vacancyMarker(vacancyY);
+    vacancy.position.z = 0.31;
+    group.add(laptopAnchor, seatAnchor, stage, chair, vacancy);
+    const seat = deskSeat(def, 1.25);
+    const it: Interactable = { kind: 'desk', deskId: def.id, x: seat.x, z: seat.z, radius: 1.3 };
+    group.userData.interact = it;
+    interactables.push(it);
+    modelDesks.set(def.id, it);
+    groupRef.add(group);
+    desks.set(def.id, { def, group, laptopAnchor, seatAnchor, stage, chair, vacancy, vacancyY });
+  };
+  const removeModelDesk = (id: string) => {
+    const it = modelDesks.get(id);
+    if (!it) return;
+    const i = interactables.indexOf(it);
+    if (i >= 0) interactables.splice(i, 1);
+    modelDesks.delete(id);
+    const view = desks.get(id);
+    if (view) groupRef.remove(view.group);
+    desks.delete(id);
+  };
+  const groupRef = group;
+
   /** Puts a desk where build mode moved it on this floor, or back where the office puts it (none). */
   const moveDesk = (id: string, place?: { x: number; z: number; rotY: number }) => {
     const parts = deskParts.get(id);
@@ -1503,7 +1551,7 @@ export function buildOffice(): Office {
     hoop.update(dt);
   };
 
-  return { group, colliders, interactables, desks, moveDesk, setFlooring, setBeanbags, boardMeshes, tvScreen, bossScreen, machineScreen, meetingBoard: meeting.board, meetingSign: meeting.sign, fixtures: () => fixtures, elevator, gong, jukebox, cabinet, whiteboard, tee, green, hoop, stack, setProjectName, setLook, setLevel, night, plants, update };
+  return { group, colliders, interactables, desks, moveDesk, addModelDesk, removeModelDesk, setFlooring, setBeanbags, boardMeshes, tvScreen, bossScreen, machineScreen, meetingBoard: meeting.board, meetingSign: meeting.sign, fixtures: () => fixtures, elevator, gong, jukebox, cabinet, whiteboard, tee, green, hoop, stack, setProjectName, setLook, setLevel, night, plants, update };
 }
 
 /** A chair at the meeting table, with its laptop on the table in front of it. */

@@ -1198,3 +1198,23 @@ test('a worker can be renamed, repainted, dressed and given standing instruction
   const brief = launch.args[launch.args.indexOf('--append-system-prompt') + 1];
   assert.match(brief, /Standing instructions for you, Penny Lane[\s\S]*British English/);
 });
+
+test('a worker can be hired at a desk on a model, and moves to another desk when the model goes', async (t) => {
+  const f = fixture();
+  const updates: WorkerInfo[] = [];
+  isolateProviderEnvironment(f, t);
+  t.after(() => f.close());
+  let desks = new Map([['a-model1', { id: 'a-model1', x: 3, z: 3, rotY: 0, label: 'Gold desk' }]]);
+  const workers = new WorkerManager(f.root, f.data, f.claude, ['--from-test'], { url: 'http://127.0.0.1:1', token: '' }, events(updates), ledger(f.data), undefined, undefined, (id) => desks.get(id));
+  t.after(() => workers.shutdown());
+
+  assert.match(workers.spawn('a-nothing', 'Sam', 'hi', false, 'agent', 'claude') as string, /Unknown desk/);
+  const w = workers.spawn('a-model1', 'Sam', 'hi', false, 'agent', 'claude');
+  if (typeof w === 'string') return assert.fail(w);
+  assert.equal(w.deskId, 'a-model1');
+  assert.match(workers.spawn('a-model1', 'Sam', 'again', false, 'agent', 'claude') as string, /taken/);
+
+  desks = new Map();
+  workers.rehome();
+  assert.equal(workers.get(w.id)?.deskId, 'desk-1', 'the model went, so it sits at the first free desk');
+});
