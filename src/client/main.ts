@@ -63,6 +63,8 @@ import { elevatorPanelOpen, openElevator, routeElevatorMessage } from './ui/elev
 import { openMail, routeMailMessage } from './ui/mail';
 import { BuildMode } from './ui/build';
 import { openLibrary } from './ui/assets';
+import { ScreenLayer } from './world/screens';
+import { openBrowser } from './ui/browser';
 import { FurnitureView } from './world/furniture';
 import { openWorkerLook } from './ui/workerlook';
 import { cantMove, openCoworkPicker, openMoveFloor, routeCoworkMessage } from './ui/cowork';
@@ -303,6 +305,19 @@ const BUILD_CENTER = new THREE.Vector2(0, 0);
 // What's been added to the floor in build mode, and its moved desks (see world/furniture.ts).
 const furniture = new FurnitureView(office.colliders, office, () => store.assets);
 office.group.add(furniture.group);
+// The screens on your models, each showing a web page (see world/screens.ts).
+const screens = new ScreenLayer(canvas.parentElement!, office.interactables);
+office.group.add(screens.group);
+const showScreens = () => screens.apply(store.furniture.items, store.assets);
+store.on('furniture', showScreens);
+store.on('assets', showScreens);
+/** E at a screen: its page, to use, and to change for everyone. */
+function useScreen(itemId: string) {
+  const item = store.furniture.items.find((x) => x.id === itemId);
+  if (!item) return;
+  const name = store.assets.find((a) => a.id === item.asset)?.name ?? 'Screen';
+  openBrowser({ title: name, url: item.url, onNavigate: (url) => net.send({ t: 'furn.update', id: itemId, item: { url } }) });
+}
 store.on('furniture', () => furniture.apply(store.furniture));
 // A desk on a model came (or was rebuilt): whoever works there sits down at it.
 furniture.onDesks = () => {
@@ -1794,6 +1809,7 @@ function interact(target: Interactable | null, key: DeskKey, note = aimedNote) {
   else if (target.kind === 'tv') watchShare();
   else if (target.kind === 'jukebox') showJukebox();
   else if (target.kind === 'bookshelf') showBookshelf();
+  else if (target.kind === 'screen' && target.screenId) useScreen(target.screenId);
   else if (target.kind === 'decor' && target.decorId) hanger.view(target.decorId);
   else if (target.kind === 'seat' && target.seatId) useSeat(target.seatId);
   else if (target.kind === 'dog') net.send({ t: 'dog.pet' });
@@ -2497,6 +2513,18 @@ function hintFor(it: Interactable): Hint {
       const about = left !== null ? `your game's paused at ${scoreText(left)}` : best ? `🏆 ${clip(best.name, 24)} · ${scoreText(best.score)}` : 'no high score yet';
       return { k: `${left}|${best?.name}|${best?.score}`, parts: [title(`🕹️ ${GAME}`), aside(about), key('E', left !== null ? 'Carry on' : 'Play')] };
     }
+    case 'screen': {
+      const url = it.screenId ? screens.url(it.screenId) : undefined;
+      let host = '';
+      try {
+        host = url ? new URL(url).host : '';
+      } catch {
+        // not a link
+      }
+      const model = store.furniture.items.find((x) => x.id === it.screenId);
+      const name = store.assets.find((a) => a.id === model?.asset)?.name ?? 'Screen';
+      return { k: url ?? '', parts: [title(`🖥️ ${name}`), aside(host || 'no page yet'), key('E', url ? 'Use it' : 'Put a page on it')] };
+    }
     case 'bookshelf': {
       const names = [...store.peers.values()].filter((p) => p.reading && p.id !== store.you && store.onMyFloor(p)).map((p) => p.name).join(', ');
       return { k: names, parts: [title('📚 Bookshelf'), aside(names ? `📖 ${clip(names, 40)} reading` : "the project's docs"), key('E', 'Read the docs')] };
@@ -3012,7 +3040,7 @@ document.addEventListener('pointerlockchange', () => {
 const raycaster = new THREE.Raycaster();
 const CROSSHAIR = new THREE.Vector2(0, 0);
 /** How close (meters from your eyes) you must be to use each kind of thing. */
-const REACH: Record<InteractKind, number> = { desk: 4.5, station: 4.5, coffee: 3, issues: 9, pulls: 9, services: 9, queue: 9, tv: 10, decor: 9, smoke: 3, elevator: 4.5, gong: 3.5, dog: 3.2, jukebox: 4, seat: 3, whiteboard: 7, cabinet: 4, ladder: 3, pole: 4, meeting: 7, bar: 3.5, dj: 6, golf: 3.5, ball: 3.2, bookshelf: 4 };
+const REACH: Record<InteractKind, number> = { desk: 4.5, station: 4.5, coffee: 3, issues: 9, pulls: 9, services: 9, queue: 9, tv: 10, decor: 9, smoke: 3, elevator: 4.5, gong: 3.5, dog: 3.2, jukebox: 4, seat: 3, whiteboard: 7, cabinet: 4, ladder: 3, pole: 4, meeting: 7, bar: 3.5, dj: 6, golf: 3.5, ball: 3.2, bookshelf: 4, screen: 5 };
 const eye = new THREE.Vector3();
 
 /** What the ray through `ndc` lands on first, whether it is within reach (plus `slack` meters), and where it hit. */
@@ -3503,6 +3531,7 @@ function frame(ts?: number) {
   drunkVisionOn = blurry;
   if (build.active) build.update(player.view === 'first' ? BUILD_CENTER : pointer, camera);
   effect.render(scene, camera);
+  if (!upTop) screens.render(camera, canvas, [office.group]);
   pointToWaiting(now);
   // Not while the camera's up at the boss's monitor or the arcade, where they'd cover the screen.
   if (firstPerson && !arcade.zoomed && !cabinet.zoomed && !golf.active) {

@@ -69,7 +69,7 @@ type TextOpts = { color?: string; bg?: string; size?: number; border?: string };
 const TEXT_SCALE = 0.0055;
 
 /** A pill-shaped text label drawn to a texture; `w`/`h` are the canvas size in pixels. */
-function textTexture(text: string, opts: TextOpts) {
+export function textTexture(text: string, opts: TextOpts) {
   const size = opts.size ?? 48;
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d')!;
