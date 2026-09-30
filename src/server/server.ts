@@ -633,6 +633,7 @@ export async function startServer(cfg: Config) {
     pulls: floor?.github.pulls ?? { items: [], fetchedAt: 0, loading: false },
     queue: floor?.queue.state() ?? { tasks: [], maxWorkers: 0 },
     decor: floor?.decor.list() ?? [],
+    furniture: floor?.furniture.get() ?? { items: [], desks: {} },
     services: servicesState(floor),
     dog: floor?.dog.view() ?? null,
     ball: floor?.court.state() ?? {},
@@ -1114,6 +1115,7 @@ export async function startServer(cfg: Config) {
   };
 
   const decorChanged = (floor: Floor) => toFloor(floor, { t: 'decor', items: floor.decor.list() });
+  const furnitureChanged = (floor: Floor) => toFloor(floor, { t: 'furniture', furniture: floor.furniture.get() });
   const ballChanged = (floor: Floor) => toFloor(floor, { t: 'ball', ball: floor.court.state() });
   const jukeboxChanged = (floor: Floor) => toFloor(floor, { t: 'jukebox', state: floor.jukebox.state() });
   const teamChanged = async () => broadcast({ t: 'team', state: await team.state() });
@@ -1993,6 +1995,36 @@ export async function startServer(cfg: Config) {
       case 'accounts.shared':
         handleAccounts(c, msg);
         break;
+      case 'furn.add': {
+        const floor = here();
+        if (!floor) break;
+        const r = floor.furniture.add(msg.item ?? {}, who);
+        if (typeof r === 'string') return warn(c, r);
+        furnitureChanged(floor);
+        break;
+      }
+      case 'furn.update': {
+        const floor = here();
+        if (!floor) break;
+        const r = floor.furniture.update(str(msg.id, 20), msg.item ?? {});
+        if (typeof r === 'string') return warn(c, r);
+        furnitureChanged(floor);
+        break;
+      }
+      case 'furn.remove': {
+        const floor = here();
+        if (!floor) break;
+        if (floor.furniture.remove(str(msg.id, 20))) furnitureChanged(floor);
+        break;
+      }
+      case 'furn.desk': {
+        const floor = here();
+        if (!floor) break;
+        const err = floor.furniture.placeDesk(str(msg.deskId, 32), msg.place && typeof msg.place === 'object' ? msg.place : null);
+        if (err) return warn(c, err);
+        furnitureChanged(floor);
+        break;
+      }
       case 'decor.add': {
         const floor = here();
         if (!floor) break;

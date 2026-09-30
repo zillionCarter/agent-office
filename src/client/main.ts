@@ -61,6 +61,8 @@ import { openSettings } from './ui/settings';
 import { hiringPaused, renderUsage, usageLabel, usageTitle } from './ui/usage';
 import { elevatorPanelOpen, openElevator, routeElevatorMessage } from './ui/elevator';
 import { openMail, routeMailMessage } from './ui/mail';
+import { BuildMode } from './ui/build';
+import { FurnitureView } from './world/furniture';
 import { openWorkerLook } from './ui/workerlook';
 import { cantMove, openCoworkPicker, openMoveFloor, routeCoworkMessage } from './ui/cowork';
 import { toggleFloorMenu } from './ui/floormenu';
@@ -295,6 +297,24 @@ scene.add(me.root);
 noOutline(me.root);
 const settings = loadSettings();
 const player = new PlayerController(camera, canvas, office.colliders);
+// What's been added to the floor in build mode, and its moved desks (see world/furniture.ts).
+const furniture = new FurnitureView(office.colliders, office);
+office.group.add(furniture.group);
+store.on('furniture', () => furniture.apply(store.furniture));
+// Changing floors (or going up to the roof) leaves build mode.
+store.on('floor', () => build.stop());
+const build = new BuildMode({
+  net,
+  canvas,
+  scene,
+  office,
+  furniture,
+  onToggle: (on) => {
+    player.enabled = !on && !modalOpen();
+    document.body.classList.toggle('building', on);
+    if (on) toast('🛠️ Build mode: pick something on the left and click to put it down, or click something to change it', 'info');
+  },
+});
 // Everyone arrives by elevator (the welcome says exactly where).
 placeInCar();
 player.view = settings.view;
@@ -2750,6 +2770,14 @@ function use(it: Interactable | null, key: DeskKey, note = aimedNote) {
 // ---- Input ----------------------------------------------------------------------------------------
 window.addEventListener('keydown', (e) => {
   if (modalOpen() || isTyping(e) || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (build.active) {
+    if (build.key(e)) e.preventDefault();
+    return;
+  }
+  if (e.code === 'KeyK' && !e.repeat && store.floor && store.floor !== ROOF) {
+    e.preventDefault();
+    return build.start();
+  }
   if (relookOnKey && e.key !== 'Escape' && player.canLock) player.lock();
   if (hanger.active && hangingKey(e.code)) {
     e.preventDefault();
@@ -3110,6 +3138,7 @@ const hud = mountHud(
     { id: 'queue', icon: '📋', label: 'Task queue', section: 'Open', count: () => store.queue.tasks.filter((t) => t.status !== 'done').length, title: () => 'Issues and tasks waiting for a worker', run: showQueue },
     { id: 'services', icon: '🌐', label: 'Services', section: 'Open', count: () => store.services.items.length, title: () => 'Web servers the workers are running', run: () => openServices() },
     { id: 'whiteboard', icon: '📝', label: 'Whiteboard', section: 'Open', title: () => 'Draw together, live', run: () => openWhiteboard(net) },
+    { id: 'build', icon: '🛠️', label: 'Build mode', section: 'Open', key: 'K', shown: () => !upTop && !!store.floor, title: () => 'Add walls, offices and furniture, and move the desks', run: () => build.start() },
     { id: 'mail', icon: '📬', label: 'Front desk mail', section: 'Open', title: () => 'The email that came in for reception, and the replies', run: () => openMail(net) },
     // Up on the top bar while a meeting is on: what's being worked through in the meeting room.
     {
@@ -3428,10 +3457,11 @@ function frame(ts?: number) {
   if (blurry) drunkVision.begin();
   else if (drunkVisionOn) drunkVision.release();
   drunkVisionOn = blurry;
-  effect.render(scene, camera);
+  if (build.active) build.frame();
+  effect.render(scene, build.active ? build.camera : camera);
   pointToWaiting(now);
   // Not while the camera's up at the boss's monitor or the arcade, where they'd cover the screen.
-  if (firstPerson && !arcade.zoomed && !cabinet.zoomed && !golf.active) {
+  if (firstPerson && !arcade.zoomed && !cabinet.zoomed && !golf.active && !build.active) {
     // Hands go on top of everything, so they never clip into a desk you walk up to. They have
     // lights of their own, turned down to match wherever you're standing.
     renderer.clearDepth();

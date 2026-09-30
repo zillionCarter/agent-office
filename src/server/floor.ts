@@ -13,6 +13,7 @@ import { Mailbox } from './mail.js';
 import { TaskQueue } from './queue.js';
 import { Changes } from './changes.js';
 import { Decor } from './decor.js';
+import { Furniture } from './furniture.js';
 import { Docs } from './docs.js';
 import { Dog } from './dog.js';
 import { Court } from './court.js';
@@ -96,6 +97,8 @@ export class Floor {
   readonly queue: TaskQueue;
   readonly changes: Changes;
   readonly decor: Decor;
+  /** What's been added in build mode, and the desks moved (see furniture.ts). */
+  readonly furniture: Furniture;
   readonly jukebox: Jukebox;
   /** The whiteboard everyone on the floor draws on together. */
   readonly whiteboard: Whiteboard;
@@ -249,6 +252,7 @@ export class Floor {
     );
 
     this.decor = new Decor(dataDir);
+    this.furniture = new Furniture(dataDir);
     this.jukebox = new Jukebox(dataDir);
     this.whiteboard = new Whiteboard(dataDir);
     this.ready = this.workers.start();

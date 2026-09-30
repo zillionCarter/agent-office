@@ -2,13 +2,14 @@ import type { AccountsState, ChatLine, FloorInfo, FloorView, GhIssue, GhPull, Gh
 import type { ScreenState } from './world/laptop';
 import { randomLook, sanitizeLook, type Look } from '../shared/avatar';
 import type { Decoration } from '../shared/decor';
+import type { FurnitureState } from '../shared/furniture';
 import { newer, type WbElement } from '../shared/whiteboard';
 import type { DogState } from '../shared/dog';
 import { JUKEBOX_TUNES, type JukeboxState } from '../shared/jukebox';
 import type { CabinetFrame, CabinetState } from '../shared/cabinet';
 import type { BallState } from '../shared/hoop';
 
-export type Topic = 'peers' | 'workers' | 'issues' | 'pulls' | 'chat' | 'project' | 'screens' | 'team' | 'upgrade' | 'services' | 'decor' | 'usage' | 'limits' | 'queue' | 'me' | 'accounts' | 'notify' | 'machine' | 'floors' | 'floor' | 'projectsDir' | 'repos' | 'dog' | 'jukebox' | 'sky' | 'theme' | 'leaveOnMerge' | 'whiteboard' | 'drawing' | 'cabinet' | 'cabinetFrame' | 'meeting' | 'prompts' | 'ball';
+export type Topic = 'peers' | 'workers' | 'issues' | 'pulls' | 'chat' | 'project' | 'screens' | 'team' | 'upgrade' | 'services' | 'decor' | 'usage' | 'limits' | 'queue' | 'me' | 'accounts' | 'notify' | 'machine' | 'floors' | 'floor' | 'projectsDir' | 'repos' | 'dog' | 'jukebox' | 'sky' | 'theme' | 'leaveOnMerge' | 'whiteboard' | 'drawing' | 'cabinet' | 'cabinetFrame' | 'meeting' | 'prompts' | 'ball' | 'furniture';
 
 const zeroUsage = (): Usage => ({ input: 0, output: 0, cacheWrite: 0, cacheRead: 0, cost: 0, calls: 0 });
 
@@ -145,6 +146,8 @@ class Store {
   services: ServicesState = { items: [], port: 4600 };
   /** Pictures on the walls. */
   decor: Decoration[] = [];
+  /** What's been added to this floor in build mode, and its moved desks. */
+  furniture: FurnitureState = { items: [], desks: {} };
   /** What the lounge jukebox is playing; `since` is when the track started, on performance.now()'s clock. */
   jukebox: JukeboxState & { since: number } = { on: false, track: JUKEBOX_TUNES[0].id, startedAt: 0, elapsed: 0, since: 0 };
   /** The office's clock minus performance.now(), from the quickest ping (see 'pong'); for the jukebox. */
@@ -246,6 +249,7 @@ class Store {
     this.queue = v.queue;
     this.meeting = v.meeting;
     this.decor = v.decor;
+    this.furniture = v.furniture ?? { items: [], desks: {} };
     this.services = v.services;
     this.whiteboard = new Map(v.whiteboard.elements.map((e) => [e.id, e]));
     this.drawing = v.whiteboard.people;
@@ -254,7 +258,7 @@ class Store {
     this.setDog(v.dog);
     this.setJukebox(v.jukebox);
     this.ball = v.ball ?? {};
-    for (const t of ['floor', 'project', 'workers', 'issues', 'pulls', 'queue', 'meeting', 'decor', 'services', 'dog', 'jukebox', 'whiteboard', 'drawing', 'cabinet', 'cabinetFrame', 'ball'] as Topic[]) this.emit(t);
+    for (const t of ['floor', 'project', 'workers', 'issues', 'pulls', 'queue', 'meeting', 'decor', 'furniture', 'services', 'dog', 'jukebox', 'whiteboard', 'drawing', 'cabinet', 'cabinetFrame', 'ball'] as Topic[]) this.emit(t);
   }
 
   private setDog(dog: DogState | null) {
@@ -374,6 +378,10 @@ class Store {
       case 'decor':
         this.decor = msg.items;
         this.emit('decor');
+        break;
+      case 'furniture':
+        this.furniture = msg.furniture;
+        this.emit('furniture');
         break;
       case 'jukebox':
         this.setJukebox(msg.state);

@@ -4,6 +4,7 @@ import type { Look } from './avatar.js';
 import type { WorkerRole } from './roles.js';
 import type { CabinetFrame, CabinetState, CabinetView } from './cabinet.js';
 import type { DecorPlacement, Decoration } from './decor.js';
+import type { DeskPlacement, FurniturePlacement, FurnitureState } from './furniture.js';
 import type { DogState } from './dog.js';
 import type { EmoteId } from './emotes.js';
 import type { BallState } from './hoop.js';
@@ -740,6 +741,8 @@ export interface FloorView {
   queue: QueueState;
   /** Pictures on this floor's walls. */
   decor: Decoration[];
+  /** What's been added in build mode, and the desks moved. */
+  furniture: FurnitureState;
   services: ServicesState;
   /** The floor's dog; null in a building with no floors yet. */
   dog: DogState | null;
@@ -1118,6 +1121,13 @@ export type ClientMsg =
   /** Move, resize, re-frame or swap the image of a picture. */
   | { t: 'decor.update'; id: string; decor: Partial<DecorPlacement> }
   | { t: 'decor.remove'; id: string }
+  /** Build mode: add a piece of furniture (a wall, a couch…) to your floor. */
+  | { t: 'furn.add'; item: FurniturePlacement }
+  /** Build mode: move, turn, stretch or repaint one. */
+  | { t: 'furn.update'; id: string; item: Partial<FurniturePlacement> }
+  | { t: 'furn.remove'; id: string }
+  /** Build mode: move a desk, or put it back where the office puts it (null). */
+  | { t: 'furn.desk'; deskId: string; place: DeskPlacement | null }
   /** Put a tune on the jukebox (a JUKEBOX_TUNES id), or a stream; with neither, turn it back on. */
   | { t: 'jukebox.play'; track?: string; url?: string }
   /** On to the next tune. */
@@ -1281,6 +1291,7 @@ export type ServerMsg =
   | { t: 'upgrade'; state: UpgradeState }
   | { t: 'services'; state: ServicesState }
   | { t: 'decor'; items: Decoration[] }
+  | { t: 'furniture'; furniture: FurnitureState }
   /** What the dog on your floor is up to now: sent at the start of each leg of its day. */
   | { t: 'dog'; dog: DogState }
   /** The basketball on your floor was picked up, thrown, or put back under the hoop. */

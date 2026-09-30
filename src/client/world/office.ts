@@ -93,6 +93,8 @@ export interface Office {
   jukebox: JukeboxView;
   /** The arcade cabinet in the lounge, where BLOCKFALL plays (ui/cabinet.ts). */
   cabinet: CabinetModel;
+  /** Moves a desk (or the reception desk) where build mode put it on this floor; none puts it back. */
+  moveDesk(id: string, place?: { x: number; z: number; rotY: number }): void;
   /** The rolling whiteboard everyone draws on together. */
   whiteboard: WhiteboardStand;
   /** The golf tee on the balcony, and the hole across the street it's hit at. */
@@ -218,7 +220,7 @@ function box(w: number, h: number, d: number) {
   return new THREE.BoxGeometry(w, h, d);
 }
 
-function plant(scale = 1): THREE.Group {
+export function plant(scale = 1): THREE.Group {
   const g = new THREE.Group();
   g.add(mesh(new THREE.CylinderGeometry(0.28, 0.22, 0.5, 12), toon(PALETTE.pot), 0, 0.25, 0));
   g.add(mesh(new THREE.SphereGeometry(0.42, 12, 10), toon(PALETTE.plant), 0, 0.85, 0));
@@ -1004,17 +1006,25 @@ export function buildOffice(): Office {
 
   // Desks
   const desks = new Map<string, DeskView>();
+  /**
+   * What moves with each desk that build mode can move (see moveDesk): its collider, whose box is
+   * `box` (minX, maxX, minZ, maxZ) in the desk's own space, and where you stand to use it, `reach`.
+   */
+  const deskParts = new Map<string, { view: DeskView; collider: Collider; it: Interactable; box: [number, number, number, number]; reach: [number, number] }>();
+  const deskHome = new Map([...DESKS, RECEPTION].map((d) => [d.id, { x: d.x, z: d.z, rotY: d.rotY }]));
   DESKS.forEach((def, i) => {
     const view = buildDesk(def, i, trimMat);
     group.add(view.group);
     desks.set(def.id, view);
     const hw = DESK_SIZE.width / 2 - 0.05;
     const hd = DESK_SIZE.depth / 2 - 0.02;
-    colliders.push({ minX: def.x - hw, maxX: def.x + hw, minZ: def.z - hd, maxZ: def.z + hd, top: DESK_SIZE.height });
+    const collider: Collider = { minX: def.x - hw, maxX: def.x + hw, minZ: def.z - hd, maxZ: def.z + hd, top: DESK_SIZE.height };
+    colliders.push(collider);
     const seat = deskSeat(def, 1.25);
     const it: Interactable = { kind: 'desk', deskId: def.id, x: seat.x, z: seat.z, radius: 1.3 };
     interactables.push(it);
     view.group.userData.interact = it;
+    deskParts.set(def.id, { view, collider, it, box: [-hw, hw, -hd, hd], reach: [0, 1.25] });
   });
 
   // The reception desk by the elevator: a desk with a counter along its front and a sign on it.
@@ -1038,11 +1048,13 @@ export function buildOffice(): Office {
     desks.set(def.id, view);
     // Turned a quarter, so the counter runs along z; the counter's front sticks out west of the desk.
     const hw = width / 2 + 0.15;
-    colliders.push({ minX: def.x + front - 0.25, maxX: def.x + depth / 2 - 0.02, minZ: def.z - hw, maxZ: def.z + hw, top: 1.12 });
+    const collider: Collider = { minX: def.x + front - 0.25, maxX: def.x + depth / 2 - 0.02, minZ: def.z - hw, maxZ: def.z + hw, top: 1.12 };
+    colliders.push(collider);
     // Walk up to the counter's front, the way you'd come from the elevator.
     const it: Interactable = { kind: 'desk', deskId: def.id, x: def.x + front - 0.95, z: def.z, radius: 1.5 };
     interactables.push(it);
     view.group.userData.interact = it;
+    deskParts.set(def.id, { view, collider, it, box: [-hw, hw, front - 0.25, depth / 2 - 0.02], reach: [0, front - 0.95] });
   }
 
   // Bean bags, put away until every desk is taken.
@@ -1082,6 +1094,32 @@ export function buildOffice(): Office {
     // The agent, its name tag and the card over its head, up against the wall.
     fixture('north', def.x, 1.45, 1.4, 2.9);
   }
+  /** Puts a desk where build mode moved it on this floor, or back where the office puts it (none). */
+  const moveDesk = (id: string, place?: { x: number; z: number; rotY: number }) => {
+    const parts = deskParts.get(id);
+    const home = deskHome.get(id);
+    if (!parts || !home) return;
+    const def = parts.view.def;
+    const at = place ?? home;
+    if (def.x === at.x && def.z === at.z && def.rotY === at.rotY) return;
+    // Everything that works out where the desk is (where its worker sits, where you stand to use it) reads its def.
+    def.x = at.x;
+    def.z = at.z;
+    def.rotY = at.rotY;
+    parts.view.group.position.set(def.x, 0, def.z);
+    parts.view.group.rotation.y = def.rotY;
+    const c = Math.cos(def.rotY);
+    const s = Math.sin(def.rotY);
+    const [x0, x1, z0, z1] = parts.box;
+    const xs: number[] = [];
+    const zs: number[] = [];
+    for (const lx of [x0, x1]) for (const lz of [z0, z1]) (xs.push(def.x + lx * c + lz * s), zs.push(def.z - lx * s + lz * c));
+    Object.assign(parts.collider, { minX: Math.min(...xs), maxX: Math.max(...xs), minZ: Math.min(...zs), maxZ: Math.max(...zs) });
+    const [rx, rz] = parts.reach;
+    parts.it.x = def.x + rx * c + rz * s;
+    parts.it.z = def.z - rx * s + rz * c;
+  };
+
   const setBeanbags = (out: Set<string>) => {
     const appeared: Collider[] = [];
     for (const [id, b] of beanbags) {
@@ -1338,7 +1376,7 @@ export function buildOffice(): Office {
     hoop.update(dt);
   };
 
-  return { group, colliders, interactables, desks, setBeanbags, boardMeshes, tvScreen, bossScreen, machineScreen, meetingBoard: meeting.board, meetingSign: meeting.sign, fixtures: () => fixtures, elevator, gong, jukebox, cabinet, whiteboard, tee, green, hoop, stack, setProjectName, setLook, setLevel, night, plants, update };
+  return { group, colliders, interactables, desks, moveDesk, setBeanbags, boardMeshes, tvScreen, bossScreen, machineScreen, meetingBoard: meeting.board, meetingSign: meeting.sign, fixtures: () => fixtures, elevator, gong, jukebox, cabinet, whiteboard, tee, green, hoop, stack, setProjectName, setLook, setLevel, night, plants, update };
 }
 
 /** A chair at the meeting table, with its laptop on the table in front of it. */
